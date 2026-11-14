@@ -1,5 +1,5 @@
 // Nireya imzası (NKOS-UI-116): açılış ekranının altında "powered by" + yatay Nireya logosu.
-// Görseller assets/images/nireya-imza/ altında hazır üretilir (11 pt yazı, %55 opaklık, 6 pt boşluk, 20 pt logo).
+// Görseller assets/images/nireya-imza/ altında hazır üretilir (11 pt yazı, %60 opaklık, ® turuncu, 6 pt boşluk, 20 pt logo; araclar/nireya-imza/uret.mjs --zemin acik).
 // iOS: SplashScreen.storyboard'a ikinci görsel; alt kenarı güvenli alanın 32 pt üstünde, yatayda ortada.
 // Android 12+: Theme.App.SplashScreen › android:windowSplashScreenBrandingImage (200x80 dp tuval, imza altta).
 // expo-splash-screen storyboard kısıtlarını yeniden yazdığı için iki taraf da "finalized" aşamasında, en sonda uygulanır.
