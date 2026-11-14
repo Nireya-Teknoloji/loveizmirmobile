@@ -12,7 +12,9 @@
       "supportsTablet": false,
       "bundleIdentifier": "com.anonymous.loveizmir"
     },
-    "android": {},
+    "android": {
+      "package": "com.anonymous.loveizmir"
+    },
     "web": {
       "favicon": "./assets/images/icon.png"
     },
@@ -25,6 +27,7 @@
       ],
       "expo-font",
       "expo-web-browser",
+      "./plugins/withNireyaImzasi",
       [
         "expo-splash-screen",
         {
@@ -36,8 +39,7 @@
             "imageWidth": 180
           }
         }
-      ],
-      "./plugins/with-nireya-imzasi.js"
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
