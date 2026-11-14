@@ -37,7 +37,7 @@
           }
         }
       ],
-      "./plugins/with-nireya-imzasi.js"
+      "./plugins/withNireyaImzasi"
     ],
     "experiments": {
       "typedRoutes": true,
