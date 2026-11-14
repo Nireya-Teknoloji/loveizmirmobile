@@ -1,0 +1,14 @@
+# Açılış ekranı + Nireya imzası (NKOS-UI-116): soğuk açılışta ilk kareler
+appId: com.anonymous.loveizmir
+---
+- launchApp:
+    clearState: true
+    stopApp: true
+- takeScreenshot: acilis-imza-1
+- takeScreenshot: acilis-imza-2
+- waitForAnimationToEnd:
+    timeout: 8000
+- takeScreenshot: acilis-sonrasi
+- stopApp
+- launchApp
+- takeScreenshot: acilis-imza-ikinci
