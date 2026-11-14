@@ -1125,7 +1125,8 @@ function ListingForm({ colors }: { colors: ReturnType<typeof useColors> }) {
       });
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
-        throw new Error(`Gönderim başarısız (${res.status}). ${txt}`.trim());
+        console.warn("[ilan] gönderim başarısız", res.status, txt);
+        throw new Error("Gönderilemedi");
       }
       await AsyncStorage.setItem(
         "loveizmir.listings.lastSubmit",
@@ -1134,8 +1135,9 @@ function ListingForm({ colors }: { colors: ReturnType<typeof useColors> }) {
       void refreshListings();
       setSubmitted(true);
     } catch (e) {
+      console.warn("[ilan] gönderim hatası", e);
       setSubmitError(
-        e instanceof Error ? e.message : "Bilinmeyen bir hata oluştu.",
+        "İlanın şu an gönderilemedi. Bağlantını kontrol edip birazdan yeniden dene.",
       );
     } finally {
       setSubmitting(false);

@@ -125,12 +125,13 @@ export function ListingsProvider({ children }: { children: React.ReactNode }) {
         }));
         await persist(cat, items, ts);
       } catch (e) {
+        console.warn("[ilanlar] yükleme hatası", cat, e);
         setData((d) => ({
           ...d,
           [cat]: {
             ...d[cat],
             loading: false,
-            error: e instanceof Error ? e.message : "İlanlar alınamadı",
+            error: "İlanlar şu an yüklenemedi. Birazdan yeniden dene.",
           },
         }));
       } finally {

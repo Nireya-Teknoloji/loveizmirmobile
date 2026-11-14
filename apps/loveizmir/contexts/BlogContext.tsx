@@ -10,6 +10,13 @@ import React, {
 
 import { askLoveizmir } from "@/lib/loveizmirApi";
 
+// Kullanıcıya olduğu gibi gösterilebilecek hata; diğer hatalar genel metne çevrilir.
+function kullaniciHatasi(mesaj: string): Error {
+  const e = new Error(mesaj);
+  e.name = "KullaniciHatasi";
+  return e;
+}
+
 export type BlogPost = {
   id: string;
   date: string; // YYYY-MM-DD
@@ -165,9 +172,9 @@ export function BlogProvider({ children }: { children: React.ReactNode }) {
           "yoksa boş dizi [] bırak.";
         const response = await askLoveizmir(prompt);
         const parsed = safeParse(response.reply);
-        if (!parsed) throw new Error("Blog yazısı üretilemedi");
+        if (!parsed) throw kullaniciHatasi("Yazı hazırlanamadı, yeniden dene");
         if (parsed.content.length < 500) {
-          throw new Error("AI çok kısa yanıt verdi, tekrar deneyin");
+          throw kullaniciHatasi("Yazı çok kısa çıktı, yeniden dene");
         }
         const blob = `${parsed.title} ${parsed.subtitle} ${parsed.content}`.toLowerCase();
         const badTerms = [
@@ -182,7 +189,7 @@ export function BlogProvider({ children }: { children: React.ReactNode }) {
           "servisi gerekli",
         ];
         if (badTerms.some((t) => blob.includes(t))) {
-          throw new Error("AI yazıyı reddetti, tekrar deneyin");
+          throw kullaniciHatasi("Bu konuda yazı hazırlanamadı, başka bir konu dene");
         }
         const post: BlogPost = {
           id: `${date}-${Date.now()}`,
@@ -195,7 +202,12 @@ export function BlogProvider({ children }: { children: React.ReactNode }) {
         setPosts(next);
         await persist(next);
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Bilinmeyen hata");
+        console.warn("[blog] üretim hatası", e);
+        const kullaniciMesaji =
+          e instanceof Error && e.name === "KullaniciHatasi"
+            ? e.message
+            : "Yazı şu an hazırlanamadı. Birazdan yeniden dene.";
+        setError(kullaniciMesaji);
       } finally {
         setLoading(false);
         inFlight.current = false;

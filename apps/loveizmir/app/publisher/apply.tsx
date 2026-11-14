@@ -77,7 +77,8 @@ export default function PublisherApplyScreen() {
         router.replace("/publisher/panel");
       },
       onError: (err: any) => {
-        setError(err.message || "Başvuru sırasında bir hata oluştu.");
+        console.warn("[yayıncı başvurusu] hata", err);
+        setError("Başvurun şu an gönderilemedi. Birazdan yeniden dene.");
       }
     });
   };
