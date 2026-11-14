@@ -1,5 +1,5 @@
 import React from "react";
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator, Pressable, Platform } from "react-native";
+import { View, Text, StyleSheet, ScrollView, ActivityIndicator, Pressable, Platform, Linking } from "react-native";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
@@ -101,11 +101,11 @@ export default function PublisherPanelScreen() {
           <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border, marginTop: 16 }]}>
             <Text style={[styles.cardTitle, { color: colors.foreground }]}>Teklif Al & Paketler</Text>
             <Text style={[styles.cardDesc, { color: colors.mutedForeground, marginTop: 8 }]}>
-              Görünürlüğünüzü artırmak için premium paket tekliflerimiz mevcuttur. Ödeme entegrasyonu web yönetim panelinden yapılmaktadır.
+              Görünürlüğünüzü artırmak için premium paket tekliflerimiz mevcuttur. Paket ve ödeme işlemleri loveizmir.com yayıncı panelinden yapılır.
             </Text>
             <Pressable
               style={[styles.secondaryBtn, { backgroundColor: colors.muted, marginTop: 16 }]}
-              onPress={() => {}}
+              onPress={() => void Linking.openURL("https://loveizmir.com/yayinci-paneli")}
             >
               <Text style={[styles.btnText, { color: colors.foreground }]}>Web'den Teklif Alın</Text>
             </Pressable>

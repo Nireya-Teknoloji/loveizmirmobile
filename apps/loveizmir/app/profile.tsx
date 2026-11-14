@@ -378,29 +378,32 @@ function DashboardSection({ colors }: { colors: any }) {
   if (isLoading) return <LoadingState colors={colors} />;
   if (isError) return <ErrorState colors={colors} />;
 
-  const stats = (data?.data?.stats as any) || {};
+  // Sunucu: { counts: { favorites, transactionRequests, bookingIntents, placeInquiries, ... } }
+  const counts = (data?.data?.counts as any) || {};
+  const talepSayisi =
+    (counts.transactionRequests ?? 0) + (counts.placeInquiries ?? 0);
 
   return (
     <View style={styles.sectionContainer}>
       <View style={styles.statsRow}>
         <StatBox
           label="Favoriler"
-          value={stats.favoriteCount ?? "-"}
+          value={counts.favorites ?? "-"}
           icon="heart"
           color={colors.coral}
           colors={colors}
         />
         <StatBox
           label="Rezervasyon"
-          value={stats.reservationCount ?? "-"}
+          value={counts.bookingIntents ?? "-"}
           icon="calendar"
           color={colors.aegean}
           colors={colors}
         />
         <StatBox
-          label="Puan"
-          value={stats.averageRating ?? "-"}
-          icon="star"
+          label="Talepler"
+          value={data?.data?.counts ? talepSayisi : "-"}
+          icon="message-square"
           color={colors.olive}
           colors={colors}
         />
@@ -663,7 +666,16 @@ function NotificationsSection({ colors }: { colors: any }) {
     },
   });
   const preferences = (data?.data?.items as any[]) || [];
-  const providers = (data?.data?.deliveryProviders as string[]) || [];
+  // Sunucu: deliveryProviders = { inApp: "AVAILABLE", push: "NOT_CONFIGURED", ... }
+  const providers =
+    (data?.data?.deliveryProviders as Record<string, string> | undefined) || {};
+  const kanalAdi: Record<string, string> = {
+    inApp: "Uygulama içi",
+    push: "Anlık bildirim",
+    email: "E-posta",
+    whatsapp: "WhatsApp",
+    sms: "SMS",
+  };
 
   if (isLoading) return <LoadingState colors={colors} />;
   if (preferences.length === 0)
@@ -674,7 +686,7 @@ function NotificationsSection({ colors }: { colors: any }) {
   return (
     <View style={[styles.sectionContainer, { gap: 10 }]}>
       {preferences.map((p, i) => {
-        const notConfigured = !providers.includes(p.channel);
+        const notConfigured = providers[p.channel] !== "AVAILABLE";
         return (
           <View
             key={i}
@@ -694,7 +706,7 @@ function NotificationsSection({ colors }: { colors: any }) {
               <Text
                 style={[styles.itemMeta, { color: colors.mutedForeground }]}
               >
-                {p.channel} {notConfigured ? "(Yapılandırılmadı)" : ""}
+                {kanalAdi[p.channel] ?? p.channel}{notConfigured ? " · şu an kapalı" : ""}
               </Text>
             </View>
             {!notConfigured && (
@@ -716,15 +728,32 @@ function SupportSection({ colors }: { colors: any }) {
   const { data, isLoading } = useGetMeSupport({
     query: { queryKey: [...getGetMeSupportQueryKey(), user?.id] },
   });
-  const list = (data?.data?.cases as any[]) || [];
+  const list = (data?.data?.items as any[]) || [];
   if (isLoading) return <LoadingState colors={colors} />;
   if (list.length === 0)
     return (
       <EmptyState colors={colors} message="Destek talebiniz bulunmuyor." />
     );
   return (
-    <View style={styles.sectionContainer}>
-      <Text style={{ color: colors.foreground }}>Talepler: {list.length}</Text>
+    <View style={[styles.sectionContainer, { gap: 10 }]}>
+      {list.map((c, i) => (
+        <View
+          key={c.id ?? i}
+          style={[
+            styles.itemCard,
+            { borderColor: colors.border, backgroundColor: colors.card },
+          ]}
+        >
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.itemTitle, { color: colors.foreground }]}>
+              {c.subject || c.title || "Destek talebi"}
+            </Text>
+            <Text style={[styles.itemMeta, { color: colors.mutedForeground }]}>
+              {c.createdAt ? new Date(c.createdAt).toLocaleDateString("tr-TR") : ""}
+            </Text>
+          </View>
+        </View>
+      ))}
     </View>
   );
 }

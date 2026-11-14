@@ -12,11 +12,13 @@ import {
 } from "react-native";
 
 import { useLoveScore } from "@/contexts/LoveScoreContext";
+import { useMasterAi } from "@/contexts/MasterAiContext";
 import { useColors } from "@/hooks/useColors";
 import { useIzmirPulse } from "@/hooks/useIzmirPulse";
 import { getFomoMoments, type FomoMoment } from "@/lib/fomo";
 
 export function FomoTicker() {
+  const { openAndSend } = useMasterAi();
   const colors = useColors();
   const { mood, now, msToSunset } = useIzmirPulse();
   const { award } = useLoveScore();
@@ -64,6 +66,7 @@ export function FomoTicker() {
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
     award("card_tap");
+    openAndSend(m.aiPrompt);
   };
 
   if (moments.length === 0) return null;

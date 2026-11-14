@@ -7,6 +7,7 @@ import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { HeartLogo } from "@/components/HeartLogo";
 import { useLoveScore } from "@/contexts/LoveScoreContext";
+import { useMasterAi } from "@/contexts/MasterAiContext";
 import { useIzmirPulse } from "@/hooks/useIzmirPulse";
 import { useColors } from "@/hooks/useColors";
 import {
@@ -16,6 +17,7 @@ import {
 } from "@/lib/dailyLoop";
 
 export function DailyLoop() {
+  const { openAndSend } = useMasterAi();
   const colors = useColors();
   const router = useRouter();
   const { now, mood } = useIzmirPulse();
@@ -58,7 +60,7 @@ export function DailyLoop() {
 
       <View style={styles.gridRow}>
         {cards.map((c) => (
-          <DailyCard key={c.id} card={c} onPress={() => {}} />
+          <DailyCard key={c.id} card={c} onPress={() => openAndSend(c.aiPrompt)} />
         ))}
       </View>
     </View>

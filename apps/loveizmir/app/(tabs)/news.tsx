@@ -23,6 +23,7 @@ import {
   useListNewsDistricts,
 } from "@workspace/api-client-react";
 import { HeartLogo } from "@/components/HeartLogo";
+import { useMasterAi } from "@/contexts/MasterAiContext";
 
 function formatTime(ts: string | null | undefined): string {
   if (!ts) return "henüz";
@@ -39,6 +40,7 @@ export default function NewsScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { openAndSend } = useMasterAi();
 
   const [filterCategory, setFilterCategory] = useState<string | undefined>();
   const [filterDistrict, setFilterDistrict] = useState<string | undefined>();
@@ -168,14 +170,16 @@ export default function NewsScreen() {
           </Pressable>
           <Pressable
             style={[styles.actionBtnOutline, { borderColor: colors.border }]}
-            onPress={() => {}}
+            onPress={() =>
+              openAndSend("Loveİzmir'e bir İzmir haber kaynağı önermek istiyorum.")
+            }
           >
             <Feather name="plus-circle" size={16} color={colors.foreground} />
             <Text style={[styles.actionBtnText, { color: colors.foreground }]}>Haber kaynağı öner</Text>
           </Pressable>
           <Pressable
             style={[styles.actionBtnOutline, { borderColor: colors.border }]}
-            onPress={() => {}}
+            onPress={() => router.push("/guide")}
           >
             <Feather name="grid" size={16} color={colors.foreground} />
             <Text style={[styles.actionBtnText, { color: colors.foreground }]}>Kategorileri keşfet</Text>

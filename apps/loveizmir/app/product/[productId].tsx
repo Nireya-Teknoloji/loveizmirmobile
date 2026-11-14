@@ -409,7 +409,7 @@ export default function ProductDetailScreen() {
           "Idempotency-Key": `${productId}-${idempotencyKeyRef.current}`,
         } satisfies RequestMarketplaceProductHeaders,
         data: {
-          message: "I would like to request this product.",
+          message: "Bu ürün için talepte bulunmak istiyorum.",
         } satisfies ProductCtaBody,
         productId: productId!
       },

@@ -116,9 +116,19 @@ export function MasterAiSheet() {
     async (action: LoveIzmirAction) => {
       try {
         if (action.type === "OPEN_PAGE") {
-          const safePath = action.target.startsWith("/")
+          const hedef = action.target.startsWith("/")
             ? action.target
             : "/" + action.target;
+          // Sunucunun izinli sayfa listesi web adlarını kullanır; mobildeki karşılıkları.
+          const MOBIL_KARSILIK: Record<string, string> = {
+            "/services": "/life",
+            "/ilanlar": "/life",
+            "/haberler": "/news",
+            "/rehber": "/guide",
+            "/sohbet": "/chat",
+            "/profil": "/profile",
+          };
+          const safePath = MOBIL_KARSILIK[hedef] ?? hedef;
           close();
           router.push(safePath as never);
         } else if (action.type === "OPEN_MAP") {
@@ -130,8 +140,8 @@ export function MasterAiSheet() {
           const num = action.target.replace(/\D/g, "");
           if (num) await Linking.openURL(`https://wa.me/${num}`);
         }
-      } catch {
-        // ignore invalid routes
+      } catch (e) {
+        console.warn("[master-ai] eylem açılamadı", action, e);
       }
     },
     [close, router],
