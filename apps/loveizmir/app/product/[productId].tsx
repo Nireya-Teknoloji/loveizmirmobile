@@ -115,6 +115,27 @@ type AvailabilityProjection = {
   units: AvailabilityUnit[];
 };
 
+function availabilitySummary(a: AvailabilityProjection): string {
+  const openSlots = a.slots.filter((slot) => slot.available > 0).length;
+  const openUnits = a.units.reduce((total, unit) => total + Math.max(unit.remaining, 0), 0);
+  if (a.status === "CONFIGURED") {
+    if (openSlots > 0) return `${openSlots} uygun zaman var.`;
+    if (openUnits > 0) return `${openUnits} adet uygun.`;
+    return "Şu an uygun yer görünmüyor. İşletmeye talep gönderebilirsin.";
+  }
+  if (a.status === "REQUEST_ONLY") return "Uygunluk talep üzerine işletme tarafından onaylanır.";
+  return "Uygunluk bilgisi için işletmeye talep gönderebilirsin.";
+}
+
+function formatSlotTime(startsAt: string, endsAt: string): string {
+  const start = new Date(startsAt);
+  const end = new Date(endsAt);
+  if (Number.isNaN(start.getTime())) return "Uygun zaman";
+  const day = start.toLocaleDateString("tr-TR", { day: "numeric", month: "long", weekday: "short" });
+  const time = (d: Date) => d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+  return Number.isNaN(end.getTime()) ? `${day} ${time(start)}` : `${day} ${time(start)}–${time(end)}`;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -675,27 +696,15 @@ export default function ProductDetailScreen() {
           <View style={styles.section}>
             <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Müsaitlik Durumu</Text>
             <View style={[styles.policyCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-               <Text style={[styles.policyText, { color: colors.foreground }]}>Durum: {availability.status}</Text>
-               <Text style={[styles.policyText, { color: colors.foreground }]}>Kaynak: {availability.source}</Text>
-               <Text style={[styles.policyText, { color: colors.foreground }]}>Mod: {availability.mode}</Text>
-               <Text style={[styles.policyText, { color: colors.foreground }]}>Zaman Dilimi: {availability.timezone}</Text>
-               <Text style={[styles.policyText, { color: colors.foreground }]}>Güncellik: {availability.asOf}</Text>
-               <Text style={[styles.policyText, { color: colors.foreground }]}>
-                 Doğruluk: {availability.status === "CONFIGURED" ? "PERSISTED" : availability.status}
-               </Text>
-               <Text style={[styles.policyText, { color: colors.foreground }]}>
-                 Müsait Slot: {availability.slots.filter((slot) => slot.available > 0).length} ·
-                 Müsait Birim: {availability.units.reduce((total, unit) => total + unit.remaining, 0)}
-               </Text>
-               {availability.slots.map((slot) => (
-                 <View key={slot.id} style={{ gap: 2 }}>
-                   <Text style={[styles.policyText, { color: colors.foreground }]}>Slot: {slot.startsAt} — {slot.endsAt}</Text>
-                   <Text style={[styles.detailItem, { color: colors.mutedForeground }]}>Müsait: {slot.available} / {slot.capacity} · Rezerve: {slot.booked} · Bekleyen: {slot.held} · {slot.status}</Text>
-                 </View>
+               <Text style={[styles.policyText, { color: colors.foreground }]}>{availabilitySummary(availability)}</Text>
+               {availability.slots.filter((slot) => slot.available > 0).map((slot) => (
+                 <Text key={slot.id} style={[styles.detailItem, { color: colors.mutedForeground }]}>
+                   {formatSlotTime(slot.startsAt, slot.endsAt)} · {slot.available} kişilik yer
+                 </Text>
                ))}
-               {availability.units.map((unit) => (
-                 <Text key={unit.id} style={[styles.policyText, { color: colors.foreground }]}>
-                   Birim: {unit.label} ({unit.sku}) · Müsait: {unit.remaining} · {unit.status}
+               {availability.units.filter((unit) => unit.remaining > 0).map((unit) => (
+                 <Text key={unit.id} style={[styles.detailItem, { color: colors.mutedForeground }]}>
+                   {unit.label} · {unit.remaining} adet
                  </Text>
                ))}
             </View>
