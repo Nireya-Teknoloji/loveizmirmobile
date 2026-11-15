@@ -1,0 +1,11 @@
+# Soğuk açılış → açılış ekranı kapanır, alt sekmeler görünür (Release çökme/takılma denetimi)
+appId: com.anonymous.loveizmir
+---
+- launchApp:
+    clearState: true
+    stopApp: true
+- takeScreenshot: acilis-0sn
+- extendedWaitUntil:
+    visible: "Rehber"
+    timeout: 30000
+- takeScreenshot: ana-ekran
