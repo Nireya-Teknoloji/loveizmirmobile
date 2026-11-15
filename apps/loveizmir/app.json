@@ -28,6 +28,7 @@
       "expo-font",
       "expo-web-browser",
       "./plugins/withNireyaImzasi",
+      "./plugins/withAndroidPaketSatiri",
       [
         "expo-splash-screen",
         {
