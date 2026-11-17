@@ -18,6 +18,7 @@ import {
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { AiResultCard } from "@/components/AiResultCard";
 import { HeartLogo } from "@/components/HeartLogo";
 import { useMasterAi, type MasterMsg } from "@/contexts/MasterAiContext";
 import { type LoveIzmirAction } from "@/lib/loveizmirApi";
@@ -128,7 +129,10 @@ export function MasterAiSheet() {
             "/sohbet": "/chat",
             "/profil": "/profile",
           };
-          const safePath = MOBIL_KARSILIK[hedef] ?? hedef;
+          const urun = /^\/marketplace\/([0-9a-f-]{36})$/i.exec(hedef);
+          const safePath = urun
+            ? `/product/${urun[1]}`
+            : (MOBIL_KARSILIK[hedef] ?? hedef);
           close();
           router.push(safePath as never);
         } else if (action.type === "OPEN_MAP") {
@@ -214,10 +218,24 @@ export function MasterAiSheet() {
               ))}
             </View>
           )}
+          {!isUser && item.cards && item.cards.length > 0 && (
+            <View style={styles.cardsCol}>
+              {item.cards.map((c) => (
+                <AiResultCard
+                  key={c.id}
+                  card={c}
+                  onAction={(card) => onNavigate(card.action)}
+                  onAsk={(card) =>
+                    void send(`${card.title} hakkında daha fazla bilgi ver`)
+                  }
+                />
+              ))}
+            </View>
+          )}
         </View>
       );
     },
-    [colors, onNavigate],
+    [colors, onNavigate, send],
   );
 
   const topInset =
@@ -623,6 +641,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
     maxWidth: "88%",
   },
+  cardsCol: { gap: 10, marginTop: 8, width: "88%" },
   actionChip: {
     flexDirection: "row",
     alignItems: "center",

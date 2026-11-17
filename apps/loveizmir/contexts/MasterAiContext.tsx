@@ -17,6 +17,7 @@ import {
   askLoveizmir,
   type ChatMessage,
   type LoveIzmirAction,
+  type LoveIzmirCard,
 } from "@/lib/loveizmirApi";
 import { useAuth } from "@/lib/auth";
 
@@ -53,6 +54,7 @@ function isWidgetStatus(value: unknown): value is WidgetStatus {
 export type MasterMsg = ChatMessage & {
   id: string;
   actions?: LoveIzmirAction[];
+  cards?: LoveIzmirCard[];
 };
 export type PersonalizationStatus = {
   applied: boolean;
@@ -146,9 +148,9 @@ export function MasterAiProvider({ children }: { children: React.ReactNode }) {
   const widgetStatusMalformed =
     widgetStatusRes !== undefined && widgetStatus === null;
   const widgetStatusError = widgetStatusQueryError || widgetStatusMalformed;
-  const canSend =
-    widgetStatus?.available === true &&
-    widgetStatus.canonicalVerified === true;
+  // Sunucunun sohbet ucu `available` ile aynı kapıyı kullanır; ayrıca
+  // canonicalVerified şartı sohbeti gereksiz yere kapatıyordu.
+  const canSend = widgetStatus?.available === true;
 
 
   const setMode = useCallback((m: string | null) => {
@@ -278,6 +280,7 @@ export function MasterAiProvider({ children }: { children: React.ReactNode }) {
           role: "assistant",
           content: parsedReply.clean || "Üzgünüm, bir cevap üretemedim.",
           actions: [...result.actions, ...parsedReply.actions].slice(0, 3),
+          cards: Array.isArray(result.cards) ? result.cards.slice(0, 3) : [],
         };
         messagesRef.current = [...messagesRef.current, aiMsg];
         setMessages(messagesRef.current);

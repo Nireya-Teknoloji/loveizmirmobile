@@ -11,9 +11,22 @@ export type LoveIzmirAction = {
   label: string;
 };
 
+/** Görselli kart (sunucudaki aiCards.ts ile aynı alanlar). */
+export type LoveIzmirCard = {
+  id: string;
+  kind: "place" | "product";
+  entityType: string;
+  title: string;
+  district: string | null;
+  summary: string;
+  imageKey: string;
+  action: LoveIzmirAction;
+};
+
 export type LoveIzmirChatResult = {
   reply: string;
   actions: LoveIzmirAction[];
+  cards?: LoveIzmirCard[];
   source: "master_ai" | "replit_ai_fallback";
   degraded: boolean;
   personalization: {
