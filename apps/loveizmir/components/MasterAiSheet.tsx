@@ -25,6 +25,20 @@ import { type LoveIzmirAction } from "@/lib/loveizmirApi";
 import { useColors } from "@/hooks/useColors";
 import { } from "@workspace/api-client-react";
 
+/** `**kalın**` işaretlerini göstermeden kalın yazar. */
+function renderInline(content: string): React.ReactNode {
+  const parts = content.split(/(\*\*[^*\n]+\*\*)/g);
+  return parts.map((part, i) =>
+    /^\*\*[^*\n]+\*\*$/.test(part) ? (
+      <Text key={i} style={{ fontFamily: "Inter_600SemiBold" }}>
+        {part.slice(2, -2)}
+      </Text>
+    ) : (
+      part
+    ),
+  );
+}
+
 type QuickAction = {
   key: string;
   label: string;
@@ -194,7 +208,7 @@ export function MasterAiSheet() {
                 { color: isUser ? "#fff" : colors.foreground },
               ]}
             >
-              {item.content}
+              {renderInline(item.content)}
             </Text>
           </View>
           {!isUser && item.actions && item.actions.length > 0 && (
