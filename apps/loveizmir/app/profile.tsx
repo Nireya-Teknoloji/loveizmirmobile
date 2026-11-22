@@ -673,7 +673,10 @@ function NotificationsSection({ colors }: { colors: any }) {
       queryKey: [...getGetMeNotificationPreferencesQueryKey(), user?.id],
     },
   });
-  const preferences = (data?.data?.items as any[]) || [];
+  // Anlık bildirim bu platformda yoksa (Android) push kanalı satırları gösterilmez.
+  const preferences = ((data?.data?.items as any[]) || []).filter(
+    (p) => pushSupported() || p?.channel !== "push",
+  );
   // Sunucu: deliveryProviders = { inApp: "AVAILABLE", push: "NOT_CONFIGURED", ... }
   const providers =
     (data?.data?.deliveryProviders as Record<string, string> | undefined) || {};
@@ -752,7 +755,7 @@ function DevicePushCard({ colors }: { colors: any }) {
   }, []);
 
   useEffect(() => {
-    if (!pushSupported) return;
+    if (!pushSupported()) return;
     refresh();
     // Ayarlardan dönünce durumu yenile.
     const sub = AppState.addEventListener("change", (next) => {
@@ -761,7 +764,7 @@ function DevicePushCard({ colors }: { colors: any }) {
     return () => sub.remove();
   }, [refresh]);
 
-  if (!pushSupported || state === null) return null;
+  if (!pushSupported() || state === null) return null;
 
   const isOn = state === "granted";
   const canAskHere = !isOn && state === "undetermined" && canAskAgain;

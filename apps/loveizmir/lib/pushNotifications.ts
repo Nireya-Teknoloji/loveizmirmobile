@@ -1,4 +1,4 @@
-// Anlık bildirim: izin, native push token'ı (iOS APNs / Android FCM), cihaz
+// Anlık bildirim: izin, native push token'ı (şimdilik yalnız iOS APNs), cihaz
 // kaydı ve bildirimden rota. Expo push servisi kullanılmaz (EAS projectId yok).
 // Sunucu sözleşmesi: POST /api/me/push-devices { token, platform, provider },
 // DELETE /api/me/push-devices { token }.
@@ -16,9 +16,16 @@ const TOKEN_KEY = "push_registered_token";
 const SNOOZE_MS = 7 * 24 * 60 * 60 * 1000;
 const LOG = "[bildirim]";
 
-export const pushSupported = Platform.OS === "ios" || Platform.OS === "android";
+/**
+ * Anlık bildirim bu platformda açık mı? Tek kontrol noktası.
+ * Android: Firebase (google-services.json) ve sunucu FCM gönderimi yok; token
+ * alma, kayıt ve izin ön açıklaması kapalı. FCM gelince buraya "android" eklenir.
+ */
+export function pushSupported(): boolean {
+  return Platform.OS === "ios";
+}
 
-if (pushSupported) {
+if (Platform.OS === "ios" || Platform.OS === "android") {
   // Uygulama ön plandayken de banner görünsün.
   Notifications.setNotificationHandler({
     handleNotification: async () => ({
@@ -36,7 +43,7 @@ export async function getPushPermission(): Promise<{
   state: PushPermissionState;
   canAskAgain: boolean;
 }> {
-  if (!pushSupported) return { state: "denied", canAskAgain: false };
+  if (!pushSupported()) return { state: "denied", canAskAgain: false };
   try {
     const res = await Notifications.getPermissionsAsync();
     const granted =
@@ -54,7 +61,7 @@ export async function getPushPermission(): Promise<{
 
 /** Girişli kullanıcıya ön açıklama gösterilmeli mi? */
 export async function shouldShowPushPrePrompt(): Promise<boolean> {
-  if (!pushSupported || !Device.isDevice) return false;
+  if (!pushSupported() || !Device.isDevice) return false;
   const { state, canAskAgain } = await getPushPermission();
   if (state === "granted" || !canAskAgain) return false;
   if (await getString(OS_ASKED_KEY)) return false;
@@ -69,7 +76,7 @@ export async function snoozePushPrompt(): Promise<void> {
 
 /** Sistem izin penceresini açar; izin verilirse cihazı kaydeder. */
 export async function requestPushPermissionAndRegister(): Promise<boolean> {
-  if (!pushSupported) return false;
+  if (!pushSupported()) return false;
   try {
     await setString(OS_ASKED_KEY, "1");
     const res = await Notifications.requestPermissionsAsync();
@@ -84,7 +91,7 @@ export async function requestPushPermissionAndRegister(): Promise<boolean> {
 
 /** İzin verilmişse token alır ve API'ye kaydeder. Hata fırlatmaz. */
 export async function registerPushDevice(): Promise<string | null> {
-  if (!pushSupported) return null;
+  if (!pushSupported()) return null;
   if (!Device.isDevice) {
     console.info(LOG, "simülatör/emülatör: token adımı atlandı");
     return null;
@@ -134,7 +141,7 @@ export async function registerPushDevice(): Promise<string | null> {
 
 /** Çıkışta çağrılır (oturum token'ı silinmeden önce). Hata fırlatmaz. */
 export async function unregisterPushDevice(): Promise<void> {
-  if (!pushSupported) return;
+  if (!pushSupported()) return;
   try {
     const token = await getString(TOKEN_KEY);
     if (!token) return;

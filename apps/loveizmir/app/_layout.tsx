@@ -73,7 +73,7 @@ function RootLayoutNav() {
         <Stack.Screen name="partner" options={{ headerShown: false }} />
         <Stack.Screen name="transactions" options={{ headerShown: false }} />
       </Stack>
-      {pushSupported ? <PushNotificationGate /> : null}
+      {pushSupported() ? <PushNotificationGate /> : null}
     </>
   );
 }
