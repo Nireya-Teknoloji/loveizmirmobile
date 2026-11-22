@@ -4,6 +4,8 @@ import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  AppState,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -23,6 +25,12 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { useColors } from "@/hooks/useColors";
 import { SUPPORTED_LANGUAGES } from "@/lib/i18n";
 import { useAuth } from "@/lib/auth";
+import {
+  getPushPermission,
+  pushSupported,
+  requestPushPermissionAndRegister,
+  type PushPermissionState,
+} from "@/lib/pushNotifications";
 
 import {
   useGetMe,
@@ -677,14 +685,24 @@ function NotificationsSection({ colors }: { colors: any }) {
     sms: "SMS",
   };
 
-  if (isLoading) return <LoadingState colors={colors} />;
+  if (isLoading)
+    return (
+      <View style={[styles.sectionContainer, { gap: 10 }]}>
+        <DevicePushCard colors={colors} />
+        <LoadingState colors={colors} />
+      </View>
+    );
   if (preferences.length === 0)
     return (
-      <EmptyState colors={colors} message="Bildirim tercihi bulunmuyor." />
+      <View style={[styles.sectionContainer, { gap: 10 }]}>
+        <DevicePushCard colors={colors} />
+        <EmptyState colors={colors} message="Bildirim tercihi bulunmuyor." />
+      </View>
     );
 
   return (
     <View style={[styles.sectionContainer, { gap: 10 }]}>
+      <DevicePushCard colors={colors} />
       {preferences.map((p, i) => {
         const notConfigured = providers[p.channel] !== "AVAILABLE";
         return (
@@ -719,6 +737,84 @@ function NotificationsSection({ colors }: { colors: any }) {
           </View>
         );
       })}
+    </View>
+  );
+}
+
+function DevicePushCard({ colors }: { colors: any }) {
+  const [state, setState] = useState<PushPermissionState | null>(null);
+  const [canAskAgain, setCanAskAgain] = useState(false);
+
+  const refresh = React.useCallback(async () => {
+    const res = await getPushPermission();
+    setState(res.state);
+    setCanAskAgain(res.canAskAgain);
+  }, []);
+
+  useEffect(() => {
+    if (!pushSupported) return;
+    refresh();
+    // Ayarlardan dönünce durumu yenile.
+    const sub = AppState.addEventListener("change", (next) => {
+      if (next === "active") refresh();
+    });
+    return () => sub.remove();
+  }, [refresh]);
+
+  if (!pushSupported || state === null) return null;
+
+  const isOn = state === "granted";
+  const canAskHere = !isOn && state === "undetermined" && canAskAgain;
+
+  const onPress = async () => {
+    if (canAskHere) {
+      await requestPushPermissionAndRegister();
+      refresh();
+    } else {
+      Linking.openSettings().catch(() => {});
+    }
+  };
+
+  return (
+    <View
+      style={[
+        styles.itemCard,
+        {
+          borderColor: colors.border,
+          backgroundColor: colors.card,
+        },
+      ]}
+    >
+      <View
+        style={[styles.menuIcon, { backgroundColor: colors.secondary }]}
+      >
+        <Feather
+          name={isOn ? "bell" : "bell-off"}
+          size={18}
+          color={colors.accent}
+        />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={[styles.itemTitle, { color: colors.foreground }]}>
+          Bildirimler
+        </Text>
+        <Text style={[styles.itemMeta, { color: colors.mutedForeground }]}>
+          {isOn
+            ? "Açık · talebine cevap gelince haber veririz"
+            : "Kapalı · talebine cevap gelince haber alamazsın"}
+        </Text>
+      </View>
+      {!isOn && (
+        <Pressable
+          onPress={onPress}
+          accessibilityRole="button"
+          style={[styles.pushBtn, { backgroundColor: colors.accent }]}
+        >
+          <Text style={styles.pushBtnText}>
+            {canAskHere ? "Aç" : "Ayarları aç"}
+          </Text>
+        </Pressable>
+      )}
     </View>
   );
 }
@@ -1167,6 +1263,19 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   outlineBtnText: { fontFamily: "Inter_600SemiBold", fontSize: 15 },
+
+  pushBtn: {
+    minHeight: 44,
+    paddingHorizontal: 16,
+    borderRadius: 99,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  pushBtnText: {
+    color: "#fff",
+    fontFamily: "Inter_600SemiBold",
+    fontSize: 14,
+  },
 
   notConfigured: {
     padding: 32,
