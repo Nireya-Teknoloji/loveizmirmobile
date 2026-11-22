@@ -77,31 +77,81 @@ export async function snoozePushPrompt(): Promise<void> {
   await setString(SNOOZE_KEY, String(Date.now() + SNOOZE_MS));
 }
 
+/**
+ * Oturum kuşağı: her çıkışta artar. Eski oturumda başlamış bir kaydın sonucu
+ * yeni oturuma yazılmaz; çıkış başladıktan sonra biten POST hemen geri silinir.
+ */
+let sessionGen = 0;
+let inflight: { userId: string; promise: Promise<boolean> } | null = null;
+const POST_TIMEOUT_MS = 10000;
+const LOGOUT_WAIT_MS = 10000;
+
+type Registration = { token: string; userId: string | null };
+
+async function readRegistration(): Promise<Registration | null> {
+  const raw = await getString(TOKEN_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed.token === "string" && parsed.token) {
+      return {
+        token: parsed.token,
+        userId: typeof parsed.userId === "string" ? parsed.userId : null,
+      };
+    }
+  } catch {
+    // Eski biçim: düz token.
+  }
+  return { token: raw, userId: null };
+}
+
+/** Bu kullanıcı için sunucuda başarılı bir cihaz kaydı var mı? */
+export async function hasPushRegistration(userId: string): Promise<boolean> {
+  if (!pushSupported()) return false;
+  const reg = await readRegistration();
+  return !!reg && reg.userId === userId;
+}
+
 /** Sistem izin penceresini açar; izin verilirse cihazı kaydeder. */
-export async function requestPushPermissionAndRegister(): Promise<boolean> {
+export async function requestPushPermissionAndRegister(
+  userId: string,
+): Promise<boolean> {
   if (!pushSupported()) return false;
   try {
     await setString(OS_ASKED_KEY, "1");
     const res = await Notifications.requestPermissionsAsync();
     if (!res.granted) return false;
-    await registerPushDevice();
-    return true;
+    return await registerPushDevice(userId);
   } catch (err) {
     console.warn(LOG, "izin istenemedi", err);
     return false;
   }
 }
 
-/** İzin verilmişse token alır ve API'ye kaydeder. Hata fırlatmaz. */
-export async function registerPushDevice(): Promise<string | null> {
-  if (!pushSupported()) return null;
+/**
+ * İzin verilmişse token alır ve API'ye bu kullanıcı adına kaydeder. Aynı anda
+ * tek kayıt yürür; çıkış onu bekler. Yalnız sunucu kaydı başarılıysa true.
+ * Hata fırlatmaz.
+ */
+export function registerPushDevice(userId: string): Promise<boolean> {
+  if (!pushSupported()) return Promise.resolve(false);
+  if (inflight && inflight.userId === userId) return inflight.promise;
+  const gen = sessionGen;
+  const promise: Promise<boolean> = doRegister(userId, gen).finally(() => {
+    if (inflight?.promise === promise) inflight = null;
+  });
+  inflight = { userId, promise };
+  return promise;
+}
+
+async function doRegister(userId: string, gen: number): Promise<boolean> {
   if (!Device.isDevice) {
     console.info(LOG, "simülatör/emülatör: token adımı atlandı");
-    return null;
+    return false;
   }
   try {
     const { state } = await getPushPermission();
-    if (state !== "granted") return null;
+    if (state !== "granted") return false;
 
     if (Platform.OS === "android") {
       await Notifications.setNotificationChannelAsync("default", {
@@ -111,36 +161,54 @@ export async function registerPushDevice(): Promise<string | null> {
       });
     }
 
-    // iOS: APNs cihaz token'ı (hex). Android: FCM token'ı; google-services.json
-    // yoksa burada hata verir, yakalanır ve kayıt atlanır.
+    // iOS: APNs cihaz token'ı (hex).
     let token: string;
     try {
       const native = await Notifications.getDevicePushTokenAsync();
       token = String(native.data ?? "");
     } catch (err) {
       console.warn(LOG, "native push token alınamadı, kayıt atlandı", err);
-      return null;
+      return false;
     }
     if (!token) {
       console.warn(LOG, "native push token boş, kayıt atlandı");
-      return null;
+      return false;
+    }
+    if (gen !== sessionGen) return false;
+
+    // Başka bir oturumdan kalmış yerel kayıt varsa bekleyen silmeye al.
+    const previous = await readRegistration();
+    if (previous && previous.userId !== userId) {
+      await addPendingDelete(previous.token);
+      await removeKey(TOKEN_KEY);
     }
     // Önceki çıkıştan kalan silmeler yeni kayıttan önce.
     await flushPendingPushDeletes();
+    if (gen !== sessionGen) return false;
+
     const provider = Platform.OS === "ios" ? "apns" : "fcm";
-    const res = await apiFetch("/api/me/push-devices", {
-      method: "POST",
-      body: JSON.stringify({ token, platform: Platform.OS, provider }),
-    });
+    const res = await apiFetchWithTimeout(
+      "/api/me/push-devices",
+      {
+        method: "POST",
+        body: JSON.stringify({ token, platform: Platform.OS, provider }),
+      },
+      POST_TIMEOUT_MS,
+    );
     if (!res.ok) {
       console.warn(LOG, "cihaz kaydı başarısız", res.status);
-      return null;
+      return false;
     }
-    await setString(TOKEN_KEY, token);
-    return token;
+    if (gen !== sessionGen) {
+      // Kayıt sürerken çıkış başladı: bu kaydı eski oturum geçerliyken geri al.
+      if (!(await deleteRemoteToken(token))) await addPendingDelete(token);
+      return false;
+    }
+    await setString(TOKEN_KEY, JSON.stringify({ token, userId }));
+    return true;
   } catch (err) {
     console.warn(LOG, "cihaz kaydı hatası", err);
-    return null;
+    return false;
   }
 }
 
@@ -239,9 +307,23 @@ export function flushPendingPushDeletes(): Promise<void> {
  */
 export async function unregisterPushDevice(): Promise<void> {
   if (!pushSupported()) return;
+  // Yeni kayıt başlamasın; süren kayıt bitsin (en çok LOGOUT_WAIT_MS).
+  sessionGen += 1;
+  const running = inflight?.promise;
+  if (running) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      running.catch(() => false),
+      new Promise((resolve) => {
+        timer = setTimeout(resolve, LOGOUT_WAIT_MS);
+      }),
+    ]);
+    if (timer) clearTimeout(timer);
+  }
   try {
-    const token = await getString(TOKEN_KEY);
-    if (!token) return;
+    const reg = await readRegistration();
+    if (!reg) return;
+    const token = reg.token;
     if (!(await deleteRemoteToken(token))) await addPendingDelete(token);
     await removeKey(TOKEN_KEY);
   } catch (err) {

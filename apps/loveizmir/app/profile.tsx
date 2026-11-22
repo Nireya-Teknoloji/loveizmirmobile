@@ -745,6 +745,7 @@ function NotificationsSection({ colors }: { colors: any }) {
 }
 
 function DevicePushCard({ colors }: { colors: any }) {
+  const { user } = useAuth();
   const [state, setState] = useState<PushPermissionState | null>(null);
   const [canAskAgain, setCanAskAgain] = useState(false);
 
@@ -771,7 +772,7 @@ function DevicePushCard({ colors }: { colors: any }) {
 
   const onPress = async () => {
     if (canAskHere) {
-      await requestPushPermissionAndRegister();
+      if (user?.id) await requestPushPermissionAndRegister(user.id);
       refresh();
     } else {
       Linking.openSettings().catch(() => {});

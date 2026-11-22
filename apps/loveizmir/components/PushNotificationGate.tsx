@@ -25,6 +25,9 @@ export function PushNotificationGate() {
   const { user, isLoading } = useAuth();
   const [visible, setVisible] = useState(false);
   const checkedFor = useRef<string | null>(null);
+  // Güncel oturum; await sonrası sonucun eski oturuma yazılmaması için.
+  const userIdRef = useRef<string | null>(null);
+  userIdRef.current = user?.id ?? null;
   const handledResponse = useRef<string | null>(null);
   const lastResponse = Notifications.useLastNotificationResponse();
 
@@ -36,13 +39,14 @@ export function PushNotificationGate() {
     }
     if (checkedFor.current === user.id) return;
     checkedFor.current = user.id;
+    const userId = user.id;
     let cancelled = false;
     (async () => {
       // Önceki çıkışta sunucudan silinemeyen kayıt varsa önce onu sil.
       await flushPendingPushDeletes();
       const { state } = await getPushPermission();
       if (state === "granted") {
-        await registerPushDevice();
+        await registerPushDevice(userId);
         return;
       }
       if (!cancelled && (await shouldShowPushPrePrompt())) setVisible(true);
@@ -77,7 +81,9 @@ export function PushNotificationGate() {
 
   const onAllow = async () => {
     setVisible(false);
-    await requestPushPermissionAndRegister();
+    const userId = userIdRef.current;
+    if (!userId) return;
+    await requestPushPermissionAndRegister(userId);
   };
 
   const onLater = async () => {
