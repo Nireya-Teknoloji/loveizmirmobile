@@ -217,6 +217,11 @@ async function doRegister(userId: string, gen: number): Promise<boolean> {
       return false;
     }
     await setString(TOKEN_KEY, JSON.stringify({ token, userId }));
+    // Aynı token bekleyen silmede kaldıysa artık yeni hesaba ait: silinmesin.
+    const pending = await readPendingDeletes();
+    if (pending.includes(token)) {
+      await writePendingDeletes(pending.filter((t) => t !== token));
+    }
     return true;
   } catch (err) {
     console.warn(LOG, "cihaz kaydı hatası", err);
