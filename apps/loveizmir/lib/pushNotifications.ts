@@ -289,7 +289,15 @@ async function doRegister(session: PushSession): Promise<boolean> {
       await deleteOrQueue(token, cleanupSeq);
       return false;
     }
-    await setString(TOKEN_KEY, JSON.stringify({ token, userId }));
+    try {
+      await setString(TOKEN_KEY, JSON.stringify({ token, userId }));
+    } catch (err) {
+      // Sunucu kaydetti ama yerelde tutulamadı: çıkışta bulunamayacağı için hesaba bağlı
+      // kalmasın; ayrılmış temizlik seq'iyle hemen geri alınır (olmazsa bekleyen silmeye).
+      console.warn(LOG, "cihaz kaydı yerelde saklanamadı, geri alınıyor", err);
+      await deleteOrQueue(token, cleanupSeq).catch(() => undefined);
+      return false;
+    }
     // Aynı token bekleyen silmede kaldıysa artık yeni hesaba ait: silinmesin. Yalnız bu
     // kayıttan ÖNCE ayrılmış silmeler düşer; daha sonra eklenen (seq > bu kayıt) korunur.
     await removePendingDelete(token, seq);
