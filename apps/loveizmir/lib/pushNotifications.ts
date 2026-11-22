@@ -263,13 +263,20 @@ async function doRegister(session: PushSession): Promise<boolean> {
     }
     if (!alive()) return false;
 
-    // Başka bir oturumdan kalmış yerel kayıt varsa bekleyen silmeye al.
-    const previous = await readRegistration();
-    if (previous && previous.userId !== userId) {
-      await addPendingDelete(previous.token);
-      await removeRegistrationIf(previous);
-    }
-    if (!alive()) return false;
+    // Başka bir hesaptan kalmış yerel kayıt: oku, silme seq'ini ayır ve kuyruğa al — hepsi
+    // tek kilit içinde ve oturum geçerliyken. seq burada alındığı için bundan sonra açılacak
+    // her oturumun kaydından küçüktür; gecikse de yeni kaydı silemez (sunucu yok sayar).
+    const cleared = await withTokenLock(async () => {
+      if (!alive()) return false;
+      const previous = await readRegistration();
+      if (previous && previous.userId !== userId) {
+        const delSeq = await nextPushSeq();
+        await addPendingDelete(previous.token, delSeq);
+        await removeKey(TOKEN_KEY);
+      }
+      return true;
+    });
+    if (!cleared || !alive()) return false;
     // Önceki çıkıştan kalan silmeler yeni kayıttan önce.
     await flushPendingPushDeletes();
     if (!alive()) return false;
