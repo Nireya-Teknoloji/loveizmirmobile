@@ -1,7 +1,9 @@
 // Anlık bildirim: izin, native push token'ı (şimdilik yalnız iOS APNs), cihaz
 // kaydı ve bildirimden rota. Expo push servisi kullanılmaz (EAS projectId yok).
-// Sunucu sözleşmesi: POST /api/me/push-devices { token, platform, provider },
-// DELETE /api/me/push-devices { token }.
+// Sunucu sözleşmesi: POST /api/me/push-devices { token, platform, provider, seq },
+// DELETE /api/me/push-devices { token, seq }. seq cihaz başına monoton artar;
+// sunucu daha düşük seq'li geç gelen isteği yok sayar (eski POST: 409
+// STALE_SEQ, DELETE her zaman 204). Yeniden deneme aynı işlemin seq'iyle olur.
 // Hiçbir hata kullanıcıya teknik metin olarak çıkmaz; yalnız log.
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
@@ -17,6 +19,7 @@ const TOKEN_KEY = "push_registered_token";
 const PENDING_DELETE_KEY = "push_pending_delete_tokens";
 const SNOOZE_MS = 7 * 24 * 60 * 60 * 1000;
 const DELETE_TIMEOUT_MS = 5000;
+const SEQ_KEY = "push_last_seq";
 const LOG = "[bildirim]";
 
 /**
@@ -243,13 +246,21 @@ async function doRegister(session: PushSession): Promise<boolean> {
     if (!alive()) return false;
 
     const provider = Platform.OS === "ios" ? "apns" : "fcm";
+    // Bu kaydın seq'i bekleyen silmelerinkinden büyüktür (onlar önce alındı).
+    const seq = await nextPushSeq();
+    if (!alive()) return false;
     let res: Response;
     try {
       res = await apiFetchWithTimeout(
         "/api/me/push-devices",
         {
           method: "POST",
-          body: JSON.stringify({ token, platform: Platform.OS, provider }),
+          body: JSON.stringify({
+            token,
+            platform: Platform.OS,
+            provider,
+            seq,
+          }),
         },
         POST_TIMEOUT_MS,
       );
@@ -262,6 +273,8 @@ async function doRegister(session: PushSession): Promise<boolean> {
       return false;
     }
     if (!res.ok) {
+      // 409 STALE_SEQ: daha yeni bir işlem var; başarısız sayılır, uygulama
+      // öne gelince yeni seq ile yeniden denenir.
       console.warn(LOG, "cihaz kaydı başarısız", res.status);
       // 5xx: sunucu kaydedip sonra hata vermiş olabilir.
       if (res.status >= 500) await addPendingDelete(token);
@@ -269,15 +282,12 @@ async function doRegister(session: PushSession): Promise<boolean> {
     }
     if (!alive()) {
       // Kayıt sürerken çıkış başladı: bu kaydı eski oturum geçerliyken geri al.
-      if (!(await deleteRemoteToken(token))) await addPendingDelete(token);
+      await deleteOrQueue(token);
       return false;
     }
     await setString(TOKEN_KEY, JSON.stringify({ token, userId }));
     // Aynı token bekleyen silmede kaldıysa artık yeni hesaba ait: silinmesin.
-    const pending = await readPendingDeletes();
-    if (pending.includes(token)) {
-      await writePendingDeletes(pending.filter((t) => t !== token));
-    }
+    await removePendingDelete(token);
     return true;
   } catch (err) {
     console.warn(LOG, "cihaz kaydı hatası", err);
@@ -300,15 +310,36 @@ async function apiFetchWithTimeout(
 }
 
 /** Token'ı sunucudan siler: kısa zaman aşımı, bir kez yeniden dener. */
-async function deleteRemoteToken(token: string): Promise<boolean> {
+let seqChain: Promise<number> = Promise.resolve(0);
+
+/**
+ * Cihaz başına monoton sıra numarası: max(Date.now(), son+1). Kalıcı saklanır;
+ * aynı anda çağrılsa da her çağrı farklı ve daha büyük değer alır.
+ */
+function nextPushSeq(): Promise<number> {
+  const next = seqChain.then(async () => {
+    const last = Number((await getString(SEQ_KEY)) ?? 0) || 0;
+    const seq = Math.max(Date.now(), last + 1);
+    await setString(SEQ_KEY, String(seq));
+    return seq;
+  });
+  seqChain = next.catch(() => 0);
+  return next;
+}
+
+/**
+ * Token'ı sunucudan siler: kısa zaman aşımı, bir kez yeniden dener. Yeniden
+ * deneme AYNI seq ile yapılır.
+ */
+async function deleteRemoteToken(token: string, seq: number): Promise<boolean> {
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const res = await apiFetchWithTimeout(
         "/api/me/push-devices",
-        { method: "DELETE", body: JSON.stringify({ token }) },
+        { method: "DELETE", body: JSON.stringify({ token, seq }) },
         DELETE_TIMEOUT_MS,
       );
-      // 404: sunucuda bu oturuma ait kayıt yok, silinecek bir şey kalmadı.
+      // Sunucu DELETE'te her zaman 204 döner; 404 eski sunucu için "yok".
       if (res.ok || res.status === 404) return true;
       console.warn(LOG, "cihaz kaydı silinemedi", res.status);
     } catch (err) {
@@ -318,27 +349,57 @@ async function deleteRemoteToken(token: string): Promise<boolean> {
   return false;
 }
 
-async function readPendingDeletes(): Promise<string[]> {
+/** Yeni seq ile siler; olmazsa aynı seq'le bekleyen silmeye alır. */
+async function deleteOrQueue(token: string): Promise<void> {
+  const seq = await nextPushSeq();
+  if (!(await deleteRemoteToken(token, seq))) await addPendingDelete(token, seq);
+}
+
+type PendingDelete = { token: string; seq: number };
+
+async function readPendingDeletes(): Promise<PendingDelete[]> {
   try {
     const raw = await getString(PENDING_DELETE_KEY);
     const list = raw ? JSON.parse(raw) : [];
-    return Array.isArray(list)
-      ? list.filter((t): t is string => typeof t === "string" && !!t)
-      : [];
+    if (!Array.isArray(list)) return [];
+    const out: PendingDelete[] = [];
+    for (const item of list) {
+      if (typeof item === "string" && item) {
+        // Eski biçim (yalnız token): seq ilk denemede verilir.
+        out.push({ token: item, seq: 0 });
+      } else if (
+        item &&
+        typeof item.token === "string" &&
+        item.token &&
+        typeof item.seq === "number"
+      ) {
+        out.push({ token: item.token, seq: item.seq });
+      }
+    }
+    return out;
   } catch {
     return [];
   }
 }
 
-async function writePendingDeletes(list: string[]): Promise<void> {
+async function writePendingDeletes(list: PendingDelete[]): Promise<void> {
   if (list.length === 0) await removeKey(PENDING_DELETE_KEY);
   else await setString(PENDING_DELETE_KEY, JSON.stringify(list));
 }
 
-async function addPendingDelete(token: string): Promise<void> {
-  const list = await readPendingDeletes();
-  if (!list.includes(token)) list.push(token);
+/** seq verilmezse yeni seq alınır (ör. belirsiz POST'u geri alma işlemi). */
+async function addPendingDelete(token: string, seq?: number): Promise<void> {
+  const opSeq = seq ?? (await nextPushSeq());
+  const list = (await readPendingDeletes()).filter((p) => p.token !== token);
+  list.push({ token, seq: opSeq });
   await writePendingDeletes(list);
+}
+
+async function removePendingDelete(token: string): Promise<void> {
+  const list = await readPendingDeletes();
+  if (list.some((p) => p.token === token)) {
+    await writePendingDeletes(list.filter((p) => p.token !== token));
+  }
 }
 
 let flushing: Promise<void> | null = null;
@@ -355,14 +416,19 @@ export function flushPendingPushDeletes(): Promise<void> {
       const list = await readPendingDeletes();
       if (list.length === 0) return;
       if (!(await getAuthToken())) return;
-      const remaining: string[] = [];
-      for (const token of list) {
-        if (!(await deleteRemoteToken(token))) remaining.push(token);
+      const done: PendingDelete[] = [];
+      for (const item of list) {
+        // Kaydedilmiş seq ile yeniden dene (aynı işlem).
+        const seq = item.seq > 0 ? item.seq : await nextPushSeq();
+        if (await deleteRemoteToken(item.token, seq)) done.push(item);
+        else if (seq !== item.seq) await addPendingDelete(item.token, seq);
       }
-      // Bu arada eklenenler korunur.
+      // Yalnız 204 alınanlar temizlenir; bu arada eklenen/yenilenenler korunur.
       const latest = await readPendingDeletes();
       await writePendingDeletes(
-        latest.filter((t) => !list.includes(t) || remaining.includes(t)),
+        latest.filter(
+          (p) => !done.some((d) => d.token === p.token && d.seq === p.seq),
+        ),
       );
     } catch (err) {
       console.warn(LOG, "bekleyen silmeler işlenemedi", err);
@@ -405,9 +471,7 @@ export async function unregisterPushDevice(): Promise<void> {
   try {
     const reg = await readRegistration();
     if (reg) {
-      if (!(await deleteRemoteToken(reg.token))) {
-        await addPendingDelete(reg.token);
-      }
+      await deleteOrQueue(reg.token);
       await removeKey(TOKEN_KEY);
     }
     // Belirsiz/bekleyen kayıtlar da oturum hâlâ geçerliyken silinsin.
