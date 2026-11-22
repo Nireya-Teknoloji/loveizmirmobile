@@ -233,16 +233,28 @@ async function doRegister(session: PushSession): Promise<boolean> {
     if (!alive()) return false;
 
     const provider = Platform.OS === "ios" ? "apns" : "fcm";
-    const res = await apiFetchWithTimeout(
-      "/api/me/push-devices",
-      {
-        method: "POST",
-        body: JSON.stringify({ token, platform: Platform.OS, provider }),
-      },
-      POST_TIMEOUT_MS,
-    );
+    let res: Response;
+    try {
+      res = await apiFetchWithTimeout(
+        "/api/me/push-devices",
+        {
+          method: "POST",
+          body: JSON.stringify({ token, platform: Platform.OS, provider }),
+        },
+        POST_TIMEOUT_MS,
+      );
+    } catch (err) {
+      // Yanıt yok (zaman aşımı/ağ): sunucu kaydetmiş olabilir. Belirsiz kayıt
+      // bekleyen silmeye alınır; çıkışta ya da sonraki denemeden önce silinir,
+      // sonraki başarılı kayıtta listeden çıkar.
+      console.warn(LOG, "cihaz kaydı yanıtsız, belirsiz", err);
+      await addPendingDelete(token);
+      return false;
+    }
     if (!res.ok) {
       console.warn(LOG, "cihaz kaydı başarısız", res.status);
+      // 5xx: sunucu kaydedip sonra hata vermiş olabilir.
+      if (res.status >= 500) await addPendingDelete(token);
       return false;
     }
     if (!alive()) {
@@ -375,10 +387,14 @@ export async function unregisterPushDevice(): Promise<void> {
   }
   try {
     const reg = await readRegistration();
-    if (!reg) return;
-    const token = reg.token;
-    if (!(await deleteRemoteToken(token))) await addPendingDelete(token);
-    await removeKey(TOKEN_KEY);
+    if (reg) {
+      if (!(await deleteRemoteToken(reg.token))) {
+        await addPendingDelete(reg.token);
+      }
+      await removeKey(TOKEN_KEY);
+    }
+    // Belirsiz/bekleyen kayıtlar da oturum hâlâ geçerliyken silinsin.
+    await flushPendingPushDeletes();
   } catch (err) {
     console.warn(LOG, "cihaz kaydı silme hatası", err);
   }
