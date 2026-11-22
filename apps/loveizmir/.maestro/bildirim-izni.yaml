@@ -1,0 +1,32 @@
+# Girişsiz soğuk açılışta bildirim izni SORULMAZ: ne uygulamanın ön açıklaması
+# ("Haber verelim mi?") ne de sistemin izin penceresi çıkar. İzin yalnız
+# oturum açıldıktan sonra istenir (components/PushNotificationGate.tsx).
+appId: com.anonymous.loveizmir
+---
+- launchApp:
+    clearState: true
+    stopApp: true
+    # Maestro varsayılanı izinleri önceden verir; sistem penceresinin
+    # çıkıp çıkmadığını görebilmek için bildirim izni dokunulmadan bırakılır.
+    permissions:
+      notifications: unset
+- extendedWaitUntil:
+    visible: "Rehber"
+    timeout: 30000
+# Uygulama içi ön açıklama yok
+- assertNotVisible: "Haber verelim mi?"
+- assertNotVisible: "Şimdi değil"
+# Sistem izin penceresi yok (iOS / Android 13+, TR ve EN)
+- assertNotVisible: ".*[Bb]ildirim göndermesine izin.*"
+- assertNotVisible: ".*[Ww]ould [Ll]ike to [Ss]end [Yy]ou [Nn]otifications.*"
+- assertNotVisible: ".*send you notifications.*"
+- assertNotVisible: "Allow"
+- assertNotVisible: "İzin Ver"
+- takeScreenshot: bildirim-izni-girissiz
+# Birkaç saniye sonra da çıkmamalı (geç tetiklenen istek olmasın)
+- waitForAnimationToEnd:
+    timeout: 5000
+- assertNotVisible: "Haber verelim mi?"
+- assertNotVisible: "Allow"
+- assertNotVisible: "İzin Ver"
+- takeScreenshot: bildirim-izni-girissiz-5sn
