@@ -13,7 +13,10 @@
       "bundleIdentifier": "com.anonymous.loveizmir"
     },
     "android": {
-      "package": "com.anonymous.loveizmir"
+      "package": "com.anonymous.loveizmir",
+      "permissions": [
+        "android.permission.POST_NOTIFICATIONS"
+      ]
     },
     "web": {
       "favicon": "./assets/images/icon.png"
@@ -28,6 +31,13 @@
       "expo-font",
       "expo-web-browser",
       "./plugins/withNireyaImzasi",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/notification-icon.png",
+          "color": "#ff6b6b"
+        }
+      ],
       "./plugins/withAndroidPaketSatiri",
       [
         "expo-splash-screen",
