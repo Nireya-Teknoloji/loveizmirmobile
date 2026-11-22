@@ -33,23 +33,31 @@ export function PushNotificationGate() {
 
   // Oturum açılınca: izin zaten varsa sessizce kaydol, yoksa uygun ise sor.
   useEffect(() => {
-    if (isLoading || !user?.id) {
-      if (!user?.id) checkedFor.current = null;
+    if (!user?.id) {
+      // Çıkış: açık ön açıklama kapanır.
+      checkedFor.current = null;
+      setVisible(false);
       return;
     }
+    if (isLoading) return;
     if (checkedFor.current === user.id) return;
     checkedFor.current = user.id;
     const userId = user.id;
     let cancelled = false;
     (async () => {
       // Önceki çıkışta sunucudan silinemeyen kayıt varsa önce onu sil.
+      const stale = () => cancelled || userIdRef.current !== userId;
       await flushPendingPushDeletes();
+      if (stale()) return;
       const { state } = await getPushPermission();
+      if (stale()) return;
       if (state === "granted") {
         await registerPushDevice(userId);
         return;
       }
-      if (!cancelled && (await shouldShowPushPrePrompt())) setVisible(true);
+      const show = await shouldShowPushPrePrompt();
+      // Beklerken çıkış yapıldıysa ya da oturum değiştiyse gösterme.
+      if (show && !stale()) setVisible(true);
     })();
     return () => {
       cancelled = true;
