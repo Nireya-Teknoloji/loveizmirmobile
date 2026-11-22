@@ -88,7 +88,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(data.user);
       } else {
         // Sunucu oturumu reddetti: süren bildirim kaydı bu oturuma yazılmasın.
-        invalidatePushSession();
+        // Kayıt da bekleyen silmeye alınır; sonraki girişte sunucuda iptal edilir.
+        await invalidatePushSession();
         await SecureStore.deleteItem(AUTH_TOKEN_KEY);
         setUser(null);
       }

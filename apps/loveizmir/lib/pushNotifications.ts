@@ -118,9 +118,26 @@ export function onPushLogoutStart(listener: () => void): () => void {
   };
 }
 
-/** Oturum çıkış dışı bir yolla bittiğinde (ör. sunucu oturumu reddetti). */
-export function invalidatePushSession(): void {
+/**
+ * Oturum çıkış dışı bir yolla bittiğinde (ör. sunucu oturumu reddetti). Oturum geçersiz
+ * olduğu için sunucudan hemen silinemez: yerel kayıt, seq'i şimdi ayrılarak bekleyen
+ * silmeye alınır ve bir sonraki girişte yeni kayıttan ÖNCE sunucuda iptal edilir
+ * (DELETE token'la çalışır, hangi hesabın oturumuyla gönderildiğinden bağımsızdır).
+ * Hata fırlatmaz.
+ */
+export async function invalidatePushSession(): Promise<void> {
   sessionGen += 1;
+  if (!pushSupported()) return;
+  try {
+    await withTokenLock(async () => {
+      const reg = await readRegistration();
+      if (!reg) return;
+      await addPendingDelete(reg.token, await nextPushSeq());
+      await removeKey(TOKEN_KEY);
+    });
+  } catch (err) {
+    console.warn(LOG, "geçersiz oturumun cihaz kaydı silmeye alınamadı", err);
+  }
 }
 const POST_TIMEOUT_MS = 10000;
 const LOGOUT_WAIT_MS = 10000;
@@ -263,13 +280,14 @@ async function doRegister(session: PushSession): Promise<boolean> {
     }
     if (!alive()) return false;
 
-    // Başka bir hesaptan kalmış yerel kayıt: oku, silme seq'ini ayır ve kuyruğa al — hepsi
+    // Başka bir hesaptan (ya da eski token'dan) kalmış yerel kayıt: oku, silme seq'ini ayır ve kuyruğa al — hepsi
     // tek kilit içinde ve oturum geçerliyken. seq burada alındığı için bundan sonra açılacak
     // her oturumun kaydından küçüktür; gecikse de yeni kaydı silemez (sunucu yok sayar).
     const cleared = await withTokenLock(async () => {
       if (!alive()) return false;
       const previous = await readRegistration();
-      if (previous && previous.userId !== userId) {
+      // Aynı hesapta token değiştiyse (APNs yeniledi) eski token da sunucuda kalmasın.
+      if (previous && (previous.userId !== userId || previous.token !== token)) {
         const delSeq = await nextPushSeq();
         await addPendingDelete(previous.token, delSeq);
         await removeKey(TOKEN_KEY);
