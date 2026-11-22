@@ -10,10 +10,10 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.anonymous.loveizmir"
+      "bundleIdentifier": "com.nireya.loveizmir"
     },
     "android": {
-      "package": "com.anonymous.loveizmir",
+      "package": "com.nireya.loveizmir",
       "permissions": [
         "android.permission.POST_NOTIFICATIONS"
       ]

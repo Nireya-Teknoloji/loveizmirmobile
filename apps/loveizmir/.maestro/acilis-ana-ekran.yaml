@@ -1,5 +1,5 @@
 # Soğuk açılış → açılış ekranı kapanır, alt sekmeler görünür (Release çökme/takılma denetimi)
-appId: com.anonymous.loveizmir
+appId: com.nireya.loveizmir
 ---
 - launchApp:
     clearState: true

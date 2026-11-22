@@ -1,7 +1,7 @@
 # Girişsiz soğuk açılışta bildirim izni SORULMAZ: ne uygulamanın ön açıklaması
 # ("Haber verelim mi?") ne de sistemin izin penceresi çıkar. İzin yalnız
 # oturum açıldıktan sonra istenir (components/PushNotificationGate.tsx).
-appId: com.anonymous.loveizmir
+appId: com.nireya.loveizmir
 ---
 - launchApp:
     clearState: true

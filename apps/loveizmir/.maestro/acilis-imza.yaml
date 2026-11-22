@@ -1,5 +1,5 @@
 # Açılış ekranı + Nireya imzası (NKOS-UI-116): soğuk açılışta ilk kareler
-appId: com.anonymous.loveizmir
+appId: com.nireya.loveizmir
 ---
 - launchApp:
     clearState: true
