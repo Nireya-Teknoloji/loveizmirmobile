@@ -7,13 +7,16 @@ import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 
-import { apiFetch } from "./apiClient";
+import { apiFetch, getAuthToken } from "./apiClient";
 import { getString, removeKey, setString } from "./storage";
 
 const SNOOZE_KEY = "push_prompt_snooze_until";
 const OS_ASKED_KEY = "push_os_prompt_asked";
 const TOKEN_KEY = "push_registered_token";
+// Çıkışta sunucudan silinemeyen token'lar; sonraki açılış/girişte önce silinir.
+const PENDING_DELETE_KEY = "push_pending_delete_tokens";
 const SNOOZE_MS = 7 * 24 * 60 * 60 * 1000;
+const DELETE_TIMEOUT_MS = 5000;
 const LOG = "[bildirim]";
 
 /**
@@ -122,6 +125,8 @@ export async function registerPushDevice(): Promise<string | null> {
       console.warn(LOG, "native push token boş, kayıt atlandı");
       return null;
     }
+    // Önceki çıkıştan kalan silmeler yeni kayıttan önce.
+    await flushPendingPushDeletes();
     const provider = Platform.OS === "ios" ? "apns" : "fcm";
     const res = await apiFetch("/api/me/push-devices", {
       method: "POST",
@@ -139,18 +144,106 @@ export async function registerPushDevice(): Promise<string | null> {
   }
 }
 
-/** Çıkışta çağrılır (oturum token'ı silinmeden önce). Hata fırlatmaz. */
+async function apiFetchWithTimeout(
+  path: string,
+  init: RequestInit,
+  ms: number,
+): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await apiFetch(path, { ...init, signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Token'ı sunucudan siler: kısa zaman aşımı, bir kez yeniden dener. */
+async function deleteRemoteToken(token: string): Promise<boolean> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await apiFetchWithTimeout(
+        "/api/me/push-devices",
+        { method: "DELETE", body: JSON.stringify({ token }) },
+        DELETE_TIMEOUT_MS,
+      );
+      // 404: sunucuda bu oturuma ait kayıt yok, silinecek bir şey kalmadı.
+      if (res.ok || res.status === 404) return true;
+      console.warn(LOG, "cihaz kaydı silinemedi", res.status);
+    } catch (err) {
+      console.warn(LOG, "cihaz kaydı silme hatası", err);
+    }
+  }
+  return false;
+}
+
+async function readPendingDeletes(): Promise<string[]> {
+  try {
+    const raw = await getString(PENDING_DELETE_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    return Array.isArray(list)
+      ? list.filter((t): t is string => typeof t === "string" && !!t)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+async function writePendingDeletes(list: string[]): Promise<void> {
+  if (list.length === 0) await removeKey(PENDING_DELETE_KEY);
+  else await setString(PENDING_DELETE_KEY, JSON.stringify(list));
+}
+
+async function addPendingDelete(token: string): Promise<void> {
+  const list = await readPendingDeletes();
+  if (!list.includes(token)) list.push(token);
+  await writePendingDeletes(list);
+}
+
+let flushing: Promise<void> | null = null;
+
+/**
+ * Önceki çıkışta silinemeyen token'ları siler. Geçerli oturum yoksa bekler.
+ * Yeni kayıttan (POST) önce çağrılır. Hata fırlatmaz.
+ */
+export function flushPendingPushDeletes(): Promise<void> {
+  if (!pushSupported()) return Promise.resolve();
+  if (flushing) return flushing;
+  flushing = (async () => {
+    try {
+      const list = await readPendingDeletes();
+      if (list.length === 0) return;
+      if (!(await getAuthToken())) return;
+      const remaining: string[] = [];
+      for (const token of list) {
+        if (!(await deleteRemoteToken(token))) remaining.push(token);
+      }
+      // Bu arada eklenenler korunur.
+      const latest = await readPendingDeletes();
+      await writePendingDeletes(
+        latest.filter((t) => !list.includes(t) || remaining.includes(t)),
+      );
+    } catch (err) {
+      console.warn(LOG, "bekleyen silmeler işlenemedi", err);
+    }
+  })().finally(() => {
+    flushing = null;
+  });
+  return flushing;
+}
+
+/**
+ * Çıkışta, oturum token'ı silinmeden ÖNCE çağrılır. Önce sunucudan siler;
+ * başarılıysa yerel kaydı kaldırır, değilse token'ı bekleyen silmeye alır.
+ * Hata fırlatmaz.
+ */
 export async function unregisterPushDevice(): Promise<void> {
   if (!pushSupported()) return;
   try {
     const token = await getString(TOKEN_KEY);
     if (!token) return;
+    if (!(await deleteRemoteToken(token))) await addPendingDelete(token);
     await removeKey(TOKEN_KEY);
-    const res = await apiFetch("/api/me/push-devices", {
-      method: "DELETE",
-      body: JSON.stringify({ token }),
-    });
-    if (!res.ok) console.warn(LOG, "cihaz kaydı silinemedi", res.status);
   } catch (err) {
     console.warn(LOG, "cihaz kaydı silme hatası", err);
   }

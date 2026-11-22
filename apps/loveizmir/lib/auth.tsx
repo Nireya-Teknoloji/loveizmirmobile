@@ -148,7 +148,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [promptAsync]);
 
   const logout = useCallback(async () => {
-    // Oturum token'ı silinmeden önce bu cihazın bildirim kaydını kaldır.
+    // Sıra önemli: bildirim kaydı oturum hâlâ geçerliyken sunucudan silinir
+    // (silinemezse bekleyen silmeye alınır), oturum token'ı ancak sonra silinir.
     await unregisterPushDevice();
     try {
       const token = await SecureStore.getItem(AUTH_TOKEN_KEY);

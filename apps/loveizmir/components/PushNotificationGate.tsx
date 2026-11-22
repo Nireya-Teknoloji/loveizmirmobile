@@ -9,6 +9,7 @@ import { HeartLogo } from "@/components/HeartLogo";
 import { useColors } from "@/hooks/useColors";
 import { useAuth } from "@/lib/auth";
 import {
+  flushPendingPushDeletes,
   getPushPermission,
   internalRouteFromNotification,
   registerPushDevice,
@@ -37,6 +38,8 @@ export function PushNotificationGate() {
     checkedFor.current = user.id;
     let cancelled = false;
     (async () => {
+      // Önceki çıkışta sunucudan silinemeyen kayıt varsa önce onu sil.
+      await flushPendingPushDeletes();
       const { state } = await getPushPermission();
       if (state === "granted") {
         await registerPushDevice();
