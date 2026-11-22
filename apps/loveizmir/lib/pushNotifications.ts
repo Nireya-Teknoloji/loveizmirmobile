@@ -298,9 +298,19 @@ async function doRegister(session: PushSession): Promise<boolean> {
       await deleteOrQueue(token, cleanupSeq).catch(() => undefined);
       return false;
     }
+    // Yerel yazım sürerken çıkış başlamış olabilir: çıkış (en çok 10 sn bekler) bu kaydı
+    // bulamadan bitmiş olabilir. Oturum artık geçerli değilse kayıt burada geri alınır.
+    if (!alive()) {
+      await rollbackAfterSessionEnd(token, userId, cleanupSeq);
+      return false;
+    }
     // Aynı token bekleyen silmede kaldıysa artık yeni hesaba ait: silinmesin. Yalnız bu
     // kayıttan ÖNCE ayrılmış silmeler düşer; daha sonra eklenen (seq > bu kayıt) korunur.
     await removePendingDelete(token, seq);
+    if (!alive()) {
+      await rollbackAfterSessionEnd(token, userId, cleanupSeq);
+      return false;
+    }
     return true;
   } catch (err) {
     console.warn(LOG, "cihaz kaydı hatası", err);
@@ -360,6 +370,30 @@ async function deleteRemoteToken(token: string, seq: number): Promise<boolean> {
     }
   }
   return false;
+}
+
+/**
+ * Oturum kayıt bittikten sonra kapandıysa: sunucu kaydı ayrılmış temizlik seq'iyle geri
+ * alınır (olmazsa bekleyen silmeye), yerel kayıt hâlâ bu hesabı gösteriyorsa silinir.
+ * Depolama tamamen yazılamıyorsa bekleyen silme de tutulamaz; bu durumda bir sonraki
+ * girişte doRegister önceki kaydı başka hesaba ait görüp silmeye alır.
+ */
+async function rollbackAfterSessionEnd(
+  token: string,
+  userId: string,
+  cleanupSeq: number,
+): Promise<void> {
+  try {
+    await deleteOrQueue(token, cleanupSeq);
+  } catch (err) {
+    console.warn(LOG, "çıkış sonrası kayıt geri alınamadı", err);
+  }
+  try {
+    const reg = await readRegistration();
+    if (reg && reg.token === token && reg.userId === userId) await removeKey(TOKEN_KEY);
+  } catch (err) {
+    console.warn(LOG, "yerel kayıt temizlenemedi", err);
+  }
 }
 
 /** Verilen (yoksa yeni) seq ile siler; olmazsa aynı seq'le bekleyen silmeye alır. */
