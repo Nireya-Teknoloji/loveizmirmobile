@@ -10,7 +10,7 @@ import { useColors } from "@/hooks/useColors";
 import { useAuth } from "@/lib/auth";
 import {
   getPushPermission,
-  internalRouteFromData,
+  internalRouteFromNotification,
   registerPushDevice,
   requestPushPermissionAndRegister,
   shouldShowPushPrePrompt,
@@ -60,9 +60,7 @@ export function PushNotificationGate() {
     const id = lastResponse.notification.request.identifier;
     if (handledResponse.current === id) return;
     handledResponse.current = id;
-    const route = internalRouteFromData(
-      lastResponse.notification.request.content.data,
-    );
+    const route = internalRouteFromNotification(lastResponse.notification);
     if (!route) return;
     const t = setTimeout(() => {
       try {

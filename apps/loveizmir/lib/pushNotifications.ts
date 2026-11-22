@@ -1,7 +1,8 @@
-// Anlık bildirim: izin, Expo push token'ı, cihaz kaydı ve bildirimden rota.
-// Sunucu sözleşmesi: POST/DELETE /api/me/push-devices { token, platform? }.
+// Anlık bildirim: izin, native push token'ı (iOS APNs / Android FCM), cihaz
+// kaydı ve bildirimden rota. Expo push servisi kullanılmaz (EAS projectId yok).
+// Sunucu sözleşmesi: POST /api/me/push-devices { token, platform, provider },
+// DELETE /api/me/push-devices { token }.
 // Hiçbir hata kullanıcıya teknik metin olarak çıkmaz; yalnız log.
-import Constants from "expo-constants";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
@@ -81,15 +82,6 @@ export async function requestPushPermissionAndRegister(): Promise<boolean> {
   }
 }
 
-function resolveProjectId(): string | null {
-  const fromExtra = (
-    Constants.expoConfig?.extra as { eas?: { projectId?: string } } | undefined
-  )?.eas?.projectId;
-  const fromEas = (Constants as { easConfig?: { projectId?: string } })
-    .easConfig?.projectId;
-  return fromExtra || fromEas || null;
-}
-
 /** İzin verilmişse token alır ve API'ye kaydeder. Hata fırlatmaz. */
 export async function registerPushDevice(): Promise<string | null> {
   if (!pushSupported) return null;
@@ -109,18 +101,24 @@ export async function registerPushDevice(): Promise<string | null> {
       });
     }
 
-    const projectId = resolveProjectId();
-    if (!projectId) {
-      console.warn(LOG, "EAS projectId yok: push token alınmadı");
+    // iOS: APNs cihaz token'ı (hex). Android: FCM token'ı; google-services.json
+    // yoksa burada hata verir, yakalanır ve kayıt atlanır.
+    let token: string;
+    try {
+      const native = await Notifications.getDevicePushTokenAsync();
+      token = String(native.data ?? "");
+    } catch (err) {
+      console.warn(LOG, "native push token alınamadı, kayıt atlandı", err);
       return null;
     }
-
-    const { data: token } = await Notifications.getExpoPushTokenAsync({
-      projectId,
-    });
+    if (!token) {
+      console.warn(LOG, "native push token boş, kayıt atlandı");
+      return null;
+    }
+    const provider = Platform.OS === "ios" ? "apns" : "fcm";
     const res = await apiFetch("/api/me/push-devices", {
       method: "POST",
-      body: JSON.stringify({ token, platform: Platform.OS }),
+      body: JSON.stringify({ token, platform: Platform.OS, provider }),
     });
     if (!res.ok) {
       console.warn(LOG, "cihaz kaydı başarısız", res.status);
@@ -160,4 +158,26 @@ export function internalRouteFromData(data: unknown): string | null {
   if (!trimmed.startsWith("/") || trimmed.startsWith("//")) return null;
   if (trimmed.includes("\\") || /\s/.test(trimmed)) return null;
   return trimmed;
+}
+
+/**
+ * Dokunulan bildirimden iç rota. Native APNs yükünde url üst düzey alanda
+ * gelir: content.data yanında iOS'ta trigger.payload, Android'de
+ * trigger.remoteMessage.data da denetlenir.
+ */
+export function internalRouteFromNotification(
+  notification: Notifications.Notification,
+): string | null {
+  const { content, trigger } = notification.request;
+  const fromData = internalRouteFromData(content.data);
+  if (fromData) return fromData;
+  const t = trigger as {
+    payload?: Record<string, unknown>;
+    remoteMessage?: { data?: Record<string, unknown> };
+  } | null;
+  return (
+    internalRouteFromData(t?.payload) ??
+    internalRouteFromData(t?.remoteMessage?.data) ??
+    null
+  );
 }
