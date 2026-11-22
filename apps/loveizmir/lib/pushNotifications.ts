@@ -248,6 +248,10 @@ async function doRegister(session: PushSession): Promise<boolean> {
     const provider = Platform.OS === "ios" ? "apns" : "fcm";
     // Bu kaydın seq'i bekleyen silmelerinkinden büyüktür (onlar önce alındı).
     const seq = await nextPushSeq();
+    // Bu kaydı geri alma (temizlik) seq'i ŞİMDİ, POST'tan hemen sonra ayrılır: POST'tan büyük,
+    // ama bundan sonra başka bir hesabın yapacağı her kayıttan küçüktür. Eski POST geç dönse de
+    // temizlik yeni hesabın kaydını iptal edemez (sunucu küçük seq'li DELETE'i yok sayar).
+    const cleanupSeq = await nextPushSeq();
     if (!alive()) return false;
     let res: Response;
     try {
@@ -269,7 +273,7 @@ async function doRegister(session: PushSession): Promise<boolean> {
       // bekleyen silmeye alınır; çıkışta ya da sonraki denemeden önce silinir,
       // sonraki başarılı kayıtta listeden çıkar.
       console.warn(LOG, "cihaz kaydı yanıtsız, belirsiz", err);
-      await addPendingDelete(token);
+      await addPendingDelete(token, cleanupSeq);
       return false;
     }
     if (!res.ok) {
@@ -277,17 +281,18 @@ async function doRegister(session: PushSession): Promise<boolean> {
       // öne gelince yeni seq ile yeniden denenir.
       console.warn(LOG, "cihaz kaydı başarısız", res.status);
       // 5xx: sunucu kaydedip sonra hata vermiş olabilir.
-      if (res.status >= 500) await addPendingDelete(token);
+      if (res.status >= 500) await addPendingDelete(token, cleanupSeq);
       return false;
     }
     if (!alive()) {
-      // Kayıt sürerken çıkış başladı: bu kaydı eski oturum geçerliyken geri al.
-      await deleteOrQueue(token);
+      // Kayıt sürerken çıkış başladı: bu kaydı ayrılmış temizlik seq'iyle geri al.
+      await deleteOrQueue(token, cleanupSeq);
       return false;
     }
     await setString(TOKEN_KEY, JSON.stringify({ token, userId }));
-    // Aynı token bekleyen silmede kaldıysa artık yeni hesaba ait: silinmesin.
-    await removePendingDelete(token);
+    // Aynı token bekleyen silmede kaldıysa artık yeni hesaba ait: silinmesin. Yalnız bu
+    // kayıttan ÖNCE ayrılmış silmeler düşer; daha sonra eklenen (seq > bu kayıt) korunur.
+    await removePendingDelete(token, seq);
     return true;
   } catch (err) {
     console.warn(LOG, "cihaz kaydı hatası", err);
@@ -349,9 +354,9 @@ async function deleteRemoteToken(token: string, seq: number): Promise<boolean> {
   return false;
 }
 
-/** Yeni seq ile siler; olmazsa aynı seq'le bekleyen silmeye alır. */
-async function deleteOrQueue(token: string): Promise<void> {
-  const seq = await nextPushSeq();
+/** Verilen (yoksa yeni) seq ile siler; olmazsa aynı seq'le bekleyen silmeye alır. */
+async function deleteOrQueue(token: string, reservedSeq?: number): Promise<void> {
+  const seq = reservedSeq ?? (await nextPushSeq());
   if (!(await deleteRemoteToken(token, seq))) await addPendingDelete(token, seq);
 }
 
@@ -387,19 +392,42 @@ async function writePendingDeletes(list: PendingDelete[]): Promise<void> {
   else await setString(PENDING_DELETE_KEY, JSON.stringify(list));
 }
 
-/** seq verilmezse yeni seq alınır (ör. belirsiz POST'u geri alma işlemi). */
-async function addPendingDelete(token: string, seq?: number): Promise<void> {
-  const opSeq = seq ?? (await nextPushSeq());
-  const list = (await readPendingDeletes()).filter((p) => p.token !== token);
-  list.push({ token, seq: opSeq });
-  await writePendingDeletes(list);
+let pendingLock: Promise<unknown> = Promise.resolve();
+
+/**
+ * Bekleyen silme listesinin her oku-değiştir-yaz işlemi bu kilitle sırayla yürür;
+ * eşzamanlı ekleme/temizleme birbirinin yazdığını ezmez.
+ */
+function withPendingLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = pendingLock.then(fn);
+  pendingLock = run.catch(() => undefined);
+  return run;
 }
 
-async function removePendingDelete(token: string): Promise<void> {
-  const list = await readPendingDeletes();
-  if (list.some((p) => p.token === token)) {
-    await writePendingDeletes(list.filter((p) => p.token !== token));
-  }
+/**
+ * seq verilmezse yeni seq alınır. Aynı token için listede daha büyük seq'li işlem
+ * varsa o korunur (daha yeni işlem eskisiyle ezilmez).
+ */
+async function addPendingDelete(token: string, seq?: number): Promise<void> {
+  const opSeq = seq ?? (await nextPushSeq());
+  await withPendingLock(async () => {
+    const list = await readPendingDeletes();
+    const existing = list.find((p) => p.token === token);
+    if (existing && existing.seq >= opSeq) return;
+    await writePendingDeletes([
+      ...list.filter((p) => p.token !== token),
+      { token, seq: opSeq },
+    ]);
+  });
+}
+
+/** Yalnız seq'i belirtilenden küçük (daha eski) bekleyen silmeyi düşürür. */
+async function removePendingDelete(token: string, beforeSeq: number): Promise<void> {
+  await withPendingLock(async () => {
+    const list = await readPendingDeletes();
+    const next = list.filter((p) => !(p.token === token && p.seq < beforeSeq));
+    if (next.length !== list.length) await writePendingDeletes(next);
+  });
 }
 
 let flushing: Promise<void> | null = null;
@@ -424,12 +452,14 @@ export function flushPendingPushDeletes(): Promise<void> {
         else if (seq !== item.seq) await addPendingDelete(item.token, seq);
       }
       // Yalnız 204 alınanlar temizlenir; bu arada eklenen/yenilenenler korunur.
-      const latest = await readPendingDeletes();
-      await writePendingDeletes(
-        latest.filter(
+      // Okuma ve yazma tek kilit içinde: arada eklenen kayıt kaybolmaz.
+      await withPendingLock(async () => {
+        const latest = await readPendingDeletes();
+        const next = latest.filter(
           (p) => !done.some((d) => d.token === p.token && d.seq === p.seq),
-        ),
-      );
+        );
+        if (next.length !== latest.length) await writePendingDeletes(next);
+      });
     } catch (err) {
       console.warn(LOG, "bekleyen silmeler işlenemedi", err);
     }
