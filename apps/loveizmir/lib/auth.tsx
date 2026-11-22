@@ -11,6 +11,7 @@ import * as WebBrowser from "expo-web-browser";
 
 import * as SecureStore from "./secureStorage";
 import { getApiBase } from "./apiClient";
+import { unregisterPushDevice } from "./pushNotifications";
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -147,6 +148,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [promptAsync]);
 
   const logout = useCallback(async () => {
+    // Oturum token'ı silinmeden önce bu cihazın bildirim kaydını kaldır.
+    await unregisterPushDevice();
     try {
       const token = await SecureStore.getItem(AUTH_TOKEN_KEY);
       if (token) {
