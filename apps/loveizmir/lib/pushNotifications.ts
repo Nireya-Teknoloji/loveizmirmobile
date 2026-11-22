@@ -105,6 +105,16 @@ export function isPushSessionAlive(session: PushSession): boolean {
   return !loggingOut && session.gen === sessionGen;
 }
 
+const logoutListeners = new Set<() => void>();
+
+/** Çıkış başladığı an (ilk await'ten önce) çağrılır; ör. açık ön soru kapanır. */
+export function onPushLogoutStart(listener: () => void): () => void {
+  logoutListeners.add(listener);
+  return () => {
+    logoutListeners.delete(listener);
+  };
+}
+
 /** Oturum çıkış dışı bir yolla bittiğinde (ör. sunucu oturumu reddetti). */
 export function invalidatePushSession(): void {
   sessionGen += 1;
@@ -369,11 +379,18 @@ export function flushPendingPushDeletes(): Promise<void> {
  * Hata fırlatmaz.
  */
 export async function unregisterPushDevice(): Promise<void> {
-  if (!pushSupported()) return;
   // Await'lerden önce: oturum geçersiz, yeni kayıt başlamasın; süren kayıt
   // bitsin (en çok LOGOUT_WAIT_MS). Bayrak endPushLogout() ile iner.
   sessionGen += 1;
   loggingOut = true;
+  logoutListeners.forEach((listener) => {
+    try {
+      listener();
+    } catch (err) {
+      console.warn(LOG, "çıkış dinleyicisi hatası", err);
+    }
+  });
+  if (!pushSupported()) return;
   const running = inflight?.promise;
   if (running) {
     let timer: ReturnType<typeof setTimeout> | undefined;

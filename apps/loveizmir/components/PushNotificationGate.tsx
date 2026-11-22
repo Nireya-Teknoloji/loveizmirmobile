@@ -19,6 +19,7 @@ import {
   capturePushSession,
   flushPendingPushDeletes,
   isPushSessionAlive,
+  onPushLogoutStart,
   type PushSession,
   getPushPermission,
   internalRouteFromNotification,
@@ -54,6 +55,7 @@ export function PushNotificationGate() {
   const syncPush = useCallback(async (userId: string) => {
     if (checkedFor.current === userId || runningFor.current === userId) return;
     if (visibleRef.current) return;
+    if (!isPushSessionAlive(capturePushSession(userId))) return; // çıkış sürüyor
     runningFor.current = userId;
     // Oturum akışın en başında yakalanır; her await sonrası denetlenir.
     const session = capturePushSession(userId);
@@ -81,6 +83,16 @@ export function PushNotificationGate() {
       if (runningFor.current === userId) runningFor.current = null;
     }
   }, []);
+
+  // Çıkış BAŞLADIĞI an açık ön soru kapanır (oturum silinmesini beklemeden).
+  useEffect(
+    () =>
+      onPushLogoutStart(() => {
+        promptSession.current = null;
+        setVisible(false);
+      }),
+    [],
+  );
 
   // Oturum açılınca / değişince.
   useEffect(() => {
