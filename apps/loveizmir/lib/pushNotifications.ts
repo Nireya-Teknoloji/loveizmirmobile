@@ -125,7 +125,35 @@ export function invalidatePushSession(): void {
 const POST_TIMEOUT_MS = 10000;
 const LOGOUT_WAIT_MS = 10000;
 
-type Registration = { token: string; userId: string | null };
+/** seq: bu yerel kaydı yazan POST'un seq'i (eski biçimde yok). */
+type Registration = { token: string; userId: string | null; seq: number | null };
+
+let tokenLock: Promise<unknown> = Promise.resolve();
+
+/**
+ * Yerel kaydın (TOKEN_KEY) her oku-karşılaştır-yaz/sil işlemi bu kilitle sırayla yürür;
+ * eski bir oturumun gecikmiş geri alması yeni oturumun yazdığı kaydı ezemez.
+ */
+function withTokenLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = tokenLock.then(fn);
+  tokenLock = run.catch(() => undefined);
+  return run;
+}
+
+/** Yerel kayıt yalnız verilen kayıtla (token + kullanıcı + seq) birebir aynıysa silinir. */
+function removeRegistrationIf(expected: Registration): Promise<void> {
+  return withTokenLock(async () => {
+    const reg = await readRegistration();
+    if (
+      reg &&
+      reg.token === expected.token &&
+      reg.userId === expected.userId &&
+      reg.seq === expected.seq
+    ) {
+      await removeKey(TOKEN_KEY);
+    }
+  });
+}
 
 async function readRegistration(): Promise<Registration | null> {
   const raw = await getString(TOKEN_KEY);
@@ -136,12 +164,13 @@ async function readRegistration(): Promise<Registration | null> {
       return {
         token: parsed.token,
         userId: typeof parsed.userId === "string" ? parsed.userId : null,
+        seq: typeof parsed.seq === "number" ? parsed.seq : null,
       };
     }
   } catch {
     // Eski biçim: düz token.
   }
-  return { token: raw, userId: null };
+  return { token: raw, userId: null, seq: null };
 }
 
 /** Bu kullanıcı için sunucuda başarılı bir cihaz kaydı var mı? */
@@ -238,7 +267,7 @@ async function doRegister(session: PushSession): Promise<boolean> {
     const previous = await readRegistration();
     if (previous && previous.userId !== userId) {
       await addPendingDelete(previous.token);
-      await removeKey(TOKEN_KEY);
+      await removeRegistrationIf(previous);
     }
     if (!alive()) return false;
     // Önceki çıkıştan kalan silmeler yeni kayıttan önce.
@@ -290,7 +319,16 @@ async function doRegister(session: PushSession): Promise<boolean> {
       return false;
     }
     try {
-      await setString(TOKEN_KEY, JSON.stringify({ token, userId }));
+      // Kilit içinde ve yalnız oturum hâlâ geçerliyse yazılır; kayıt POST seq'ini taşır.
+      const written = await withTokenLock(async () => {
+        if (!alive()) return false;
+        await setString(TOKEN_KEY, JSON.stringify({ token, userId, seq }));
+        return true;
+      });
+      if (!written) {
+        await deleteOrQueue(token, cleanupSeq);
+        return false;
+      }
     } catch (err) {
       // Sunucu kaydetti ama yerelde tutulamadı: çıkışta bulunamayacağı için hesaba bağlı
       // kalmasın; ayrılmış temizlik seq'iyle hemen geri alınır (olmazsa bekleyen silmeye).
@@ -301,14 +339,14 @@ async function doRegister(session: PushSession): Promise<boolean> {
     // Yerel yazım sürerken çıkış başlamış olabilir: çıkış (en çok 10 sn bekler) bu kaydı
     // bulamadan bitmiş olabilir. Oturum artık geçerli değilse kayıt burada geri alınır.
     if (!alive()) {
-      await rollbackAfterSessionEnd(token, userId, cleanupSeq);
+      await rollbackAfterSessionEnd({ token, userId, seq }, cleanupSeq);
       return false;
     }
     // Aynı token bekleyen silmede kaldıysa artık yeni hesaba ait: silinmesin. Yalnız bu
     // kayıttan ÖNCE ayrılmış silmeler düşer; daha sonra eklenen (seq > bu kayıt) korunur.
     await removePendingDelete(token, seq);
     if (!alive()) {
-      await rollbackAfterSessionEnd(token, userId, cleanupSeq);
+      await rollbackAfterSessionEnd({ token, userId, seq }, cleanupSeq);
       return false;
     }
     return true;
@@ -374,23 +412,23 @@ async function deleteRemoteToken(token: string, seq: number): Promise<boolean> {
 
 /**
  * Oturum kayıt bittikten sonra kapandıysa: sunucu kaydı ayrılmış temizlik seq'iyle geri
- * alınır (olmazsa bekleyen silmeye), yerel kayıt hâlâ bu hesabı gösteriyorsa silinir.
+ * alınır (olmazsa bekleyen silmeye); yerel kayıt yalnız hâlâ BU kaydı (token + kullanıcı +
+ * POST seq'i) gösteriyorsa silinir. Aynı kullanıcı yeniden girip aynı token'ı daha büyük
+ * seq'le kaydettiyse o kayda dokunulmaz.
  * Depolama tamamen yazılamıyorsa bekleyen silme de tutulamaz; bu durumda bir sonraki
  * girişte doRegister önceki kaydı başka hesaba ait görüp silmeye alır.
  */
 async function rollbackAfterSessionEnd(
-  token: string,
-  userId: string,
+  registration: Registration,
   cleanupSeq: number,
 ): Promise<void> {
   try {
-    await deleteOrQueue(token, cleanupSeq);
+    await deleteOrQueue(registration.token, cleanupSeq);
   } catch (err) {
     console.warn(LOG, "çıkış sonrası kayıt geri alınamadı", err);
   }
   try {
-    const reg = await readRegistration();
-    if (reg && reg.token === token && reg.userId === userId) await removeKey(TOKEN_KEY);
+    await removeRegistrationIf(registration);
   } catch (err) {
     console.warn(LOG, "yerel kayıt temizlenemedi", err);
   }
@@ -541,10 +579,10 @@ export async function unregisterPushDevice(): Promise<void> {
     if (timer) clearTimeout(timer);
   }
   try {
-    const reg = await readRegistration();
+    const reg = await withTokenLock(readRegistration);
     if (reg) {
       await deleteOrQueue(reg.token);
-      await removeKey(TOKEN_KEY);
+      await removeRegistrationIf(reg);
     }
     // Belirsiz/bekleyen kayıtlar da oturum hâlâ geçerliyken silinsin.
     await flushPendingPushDeletes();
