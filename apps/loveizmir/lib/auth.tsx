@@ -11,7 +11,11 @@ import * as WebBrowser from "expo-web-browser";
 
 import * as SecureStore from "./secureStorage";
 import { getApiBase } from "./apiClient";
-import { unregisterPushDevice } from "./pushNotifications";
+import {
+  endPushLogout,
+  invalidatePushSession,
+  unregisterPushDevice,
+} from "./pushNotifications";
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -83,6 +87,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (data.user) {
         setUser(data.user);
       } else {
+        // Sunucu oturumu reddetti: süren bildirim kaydı bu oturuma yazılmasın.
+        invalidatePushSession();
         await SecureStore.deleteItem(AUTH_TOKEN_KEY);
         setUser(null);
       }
@@ -164,6 +170,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } finally {
       await SecureStore.deleteItem(AUTH_TOKEN_KEY);
       setUser(null);
+      endPushLogout();
     }
   }, []);
 

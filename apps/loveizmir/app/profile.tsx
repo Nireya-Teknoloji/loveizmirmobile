@@ -26,6 +26,7 @@ import { useColors } from "@/hooks/useColors";
 import { SUPPORTED_LANGUAGES } from "@/lib/i18n";
 import { useAuth } from "@/lib/auth";
 import {
+  capturePushSession,
   getPushPermission,
   hasPushRegistration,
   pushSupported,
@@ -754,11 +755,12 @@ function DevicePushCard({ colors }: { colors: any }) {
   const [registered, setRegistered] = useState(false);
 
   const refresh = React.useCallback(async () => {
+    const session = userId ? capturePushSession(userId) : null;
     const res = await getPushPermission();
     let reg = userId ? await hasPushRegistration(userId) : false;
     // İzin var ama kayıt yoksa (ör. ayarlardan yeni açıldı) kaydı dene.
-    if (res.state === "granted" && !reg && userId) {
-      reg = await registerPushDevice(userId);
+    if (res.state === "granted" && !reg && session) {
+      reg = await registerPushDevice(session);
     }
     setState(res.state);
     setCanAskAgain(res.canAskAgain);
@@ -784,7 +786,9 @@ function DevicePushCard({ colors }: { colors: any }) {
 
   const onPress = async () => {
     if (canAskHere) {
-      if (userId) await requestPushPermissionAndRegister(userId);
+      if (userId) {
+        await requestPushPermissionAndRegister(capturePushSession(userId));
+      }
       refresh();
     } else if (canRetryHere) {
       refresh();

@@ -82,7 +82,33 @@ export async function snoozePushPrompt(): Promise<void> {
  * yeni oturuma yazılmaz; çıkış başladıktan sonra biten POST hemen geri silinir.
  */
 let sessionGen = 0;
-let inflight: { userId: string; promise: Promise<boolean> } | null = null;
+// Çıkış başladığı andan oturum silinene kadar true: yeni kayıt başlamaz.
+let loggingOut = false;
+let inflight: {
+  userId: string;
+  gen: number;
+  promise: Promise<boolean>;
+} | null = null;
+
+/**
+ * Akışın en başında alınır (ön soru / izin isteğinden önce) ve tüm adımlara
+ * geçirilir. Çıkış başlarsa ya da oturum biterse geçersizleşir.
+ */
+export type PushSession = { userId: string; gen: number };
+
+export function capturePushSession(userId: string): PushSession {
+  return { userId, gen: sessionGen };
+}
+
+/** Oturum hâlâ aynı ve çıkış sürmüyor mu? */
+export function isPushSessionAlive(session: PushSession): boolean {
+  return !loggingOut && session.gen === sessionGen;
+}
+
+/** Oturum çıkış dışı bir yolla bittiğinde (ör. sunucu oturumu reddetti). */
+export function invalidatePushSession(): void {
+  sessionGen += 1;
+}
 const POST_TIMEOUT_MS = 10000;
 const LOGOUT_WAIT_MS = 10000;
 
@@ -131,15 +157,16 @@ async function ensureAndroidChannel(): Promise<void> {
 
 /** Sistem izin penceresini açar; izin verilirse cihazı kaydeder. */
 export async function requestPushPermissionAndRegister(
-  userId: string,
+  session: PushSession,
 ): Promise<boolean> {
-  if (!pushSupported()) return false;
+  if (!pushSupported() || !isPushSessionAlive(session)) return false;
   try {
     await ensureAndroidChannel();
     await setString(OS_ASKED_KEY, "1");
     const res = await Notifications.requestPermissionsAsync();
-    if (!res.granted) return false;
-    return await registerPushDevice(userId);
+    // İzin penceresi açıkken çıkış yapıldıysa kayıt yok.
+    if (!res.granted || !isPushSessionAlive(session)) return false;
+    return await registerPushDevice(session);
   } catch (err) {
     console.warn(LOG, "izin istenemedi", err);
     return false;
@@ -151,25 +178,31 @@ export async function requestPushPermissionAndRegister(
  * tek kayıt yürür; çıkış onu bekler. Yalnız sunucu kaydı başarılıysa true.
  * Hata fırlatmaz.
  */
-export function registerPushDevice(userId: string): Promise<boolean> {
-  if (!pushSupported()) return Promise.resolve(false);
-  if (inflight && inflight.userId === userId) return inflight.promise;
-  const gen = sessionGen;
-  const promise: Promise<boolean> = doRegister(userId, gen).finally(() => {
+export function registerPushDevice(session: PushSession): Promise<boolean> {
+  if (!pushSupported() || !isPushSessionAlive(session)) {
+    return Promise.resolve(false);
+  }
+  const { userId, gen } = session;
+  if (inflight && inflight.userId === userId && inflight.gen === gen) {
+    return inflight.promise;
+  }
+  const promise: Promise<boolean> = doRegister(session).finally(() => {
     if (inflight?.promise === promise) inflight = null;
   });
-  inflight = { userId, promise };
+  inflight = { userId, gen, promise };
   return promise;
 }
 
-async function doRegister(userId: string, gen: number): Promise<boolean> {
+async function doRegister(session: PushSession): Promise<boolean> {
+  const { userId } = session;
+  const alive = () => isPushSessionAlive(session);
   if (!Device.isDevice) {
     console.info(LOG, "simülatör/emülatör: token adımı atlandı");
     return false;
   }
   try {
     const { state } = await getPushPermission();
-    if (state !== "granted") return false;
+    if (state !== "granted" || !alive()) return false;
 
     await ensureAndroidChannel();
 
@@ -186,7 +219,7 @@ async function doRegister(userId: string, gen: number): Promise<boolean> {
       console.warn(LOG, "native push token boş, kayıt atlandı");
       return false;
     }
-    if (gen !== sessionGen) return false;
+    if (!alive()) return false;
 
     // Başka bir oturumdan kalmış yerel kayıt varsa bekleyen silmeye al.
     const previous = await readRegistration();
@@ -194,9 +227,10 @@ async function doRegister(userId: string, gen: number): Promise<boolean> {
       await addPendingDelete(previous.token);
       await removeKey(TOKEN_KEY);
     }
+    if (!alive()) return false;
     // Önceki çıkıştan kalan silmeler yeni kayıttan önce.
     await flushPendingPushDeletes();
-    if (gen !== sessionGen) return false;
+    if (!alive()) return false;
 
     const provider = Platform.OS === "ios" ? "apns" : "fcm";
     const res = await apiFetchWithTimeout(
@@ -211,7 +245,7 @@ async function doRegister(userId: string, gen: number): Promise<boolean> {
       console.warn(LOG, "cihaz kaydı başarısız", res.status);
       return false;
     }
-    if (gen !== sessionGen) {
+    if (!alive()) {
       // Kayıt sürerken çıkış başladı: bu kaydı eski oturum geçerliyken geri al.
       if (!(await deleteRemoteToken(token))) await addPendingDelete(token);
       return false;
@@ -324,8 +358,10 @@ export function flushPendingPushDeletes(): Promise<void> {
  */
 export async function unregisterPushDevice(): Promise<void> {
   if (!pushSupported()) return;
-  // Yeni kayıt başlamasın; süren kayıt bitsin (en çok LOGOUT_WAIT_MS).
+  // Await'lerden önce: oturum geçersiz, yeni kayıt başlamasın; süren kayıt
+  // bitsin (en çok LOGOUT_WAIT_MS). Bayrak endPushLogout() ile iner.
   sessionGen += 1;
+  loggingOut = true;
   const running = inflight?.promise;
   if (running) {
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -346,6 +382,11 @@ export async function unregisterPushDevice(): Promise<void> {
   } catch (err) {
     console.warn(LOG, "cihaz kaydı silme hatası", err);
   }
+}
+
+/** Çıkış bitti (oturum token'ı silindi): yeni oturumda kayıt serbest. */
+export function endPushLogout(): void {
+  loggingOut = false;
 }
 
 /** Bildirim verisindeki url yalnız "/" ile başlayan iç rotaysa döner. */

@@ -16,7 +16,10 @@ import { HeartLogo } from "@/components/HeartLogo";
 import { useColors } from "@/hooks/useColors";
 import { useAuth } from "@/lib/auth";
 import {
+  capturePushSession,
   flushPendingPushDeletes,
+  isPushSessionAlive,
+  type PushSession,
   getPushPermission,
   internalRouteFromNotification,
   registerPushDevice,
@@ -42,6 +45,8 @@ export function PushNotificationGate() {
   const runningFor = useRef<string | null>(null);
   const visibleRef = useRef(false);
   visibleRef.current = visible;
+  // Ön sorunun açıldığı oturum; "İzin ver" yalnız bu oturum adına kaydeder.
+  const promptSession = useRef<PushSession | null>(null);
 
   // İzin varsa sessizce kaydol, yoksa uygunsa sor. "Kontrol edildi" yalnız
   // sunucu kaydı başarılı olunca işaretlenir; olmazsa uygulama öne gelince
@@ -50,21 +55,28 @@ export function PushNotificationGate() {
     if (checkedFor.current === userId || runningFor.current === userId) return;
     if (visibleRef.current) return;
     runningFor.current = userId;
+    // Oturum akışın en başında yakalanır; her await sonrası denetlenir.
+    const session = capturePushSession(userId);
     try {
-      const stale = () => userIdRef.current !== userId;
+      const stale = () =>
+        userIdRef.current !== userId || !isPushSessionAlive(session);
+      if (stale()) return;
       // Önceki çıkışta sunucudan silinemeyen kayıt varsa önce onu sil.
       await flushPendingPushDeletes();
       if (stale()) return;
       const { state } = await getPushPermission();
       if (stale()) return;
       if (state === "granted") {
-        const ok = await registerPushDevice(userId);
+        const ok = await registerPushDevice(session);
         if (ok && !stale()) checkedFor.current = userId;
         return;
       }
       const show = await shouldShowPushPrePrompt();
       // Beklerken çıkış yapıldıysa ya da oturum değiştiyse gösterme.
-      if (show && !stale()) setVisible(true);
+      if (show && !stale()) {
+        promptSession.current = session;
+        setVisible(true);
+      }
     } finally {
       if (runningFor.current === userId) runningFor.current = null;
     }
@@ -116,14 +128,19 @@ export function PushNotificationGate() {
 
   const onAllow = async () => {
     setVisible(false);
-    const userId = userIdRef.current;
-    if (!userId) return;
-    const ok = await requestPushPermissionAndRegister(userId);
-    if (ok && userIdRef.current === userId) checkedFor.current = userId;
+    const session = promptSession.current;
+    promptSession.current = null;
+    if (!session || userIdRef.current !== session.userId) return;
+    if (!isPushSessionAlive(session)) return;
+    const ok = await requestPushPermissionAndRegister(session);
+    if (ok && userIdRef.current === session.userId) {
+      checkedFor.current = session.userId;
+    }
   };
 
   const onLater = async () => {
     setVisible(false);
+    promptSession.current = null;
     await snoozePushPrompt();
   };
 
