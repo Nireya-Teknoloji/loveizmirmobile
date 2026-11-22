@@ -27,7 +27,9 @@ import { SUPPORTED_LANGUAGES } from "@/lib/i18n";
 import { useAuth } from "@/lib/auth";
 import {
   getPushPermission,
+  hasPushRegistration,
   pushSupported,
+  registerPushDevice,
   requestPushPermissionAndRegister,
   type PushPermissionState,
 } from "@/lib/pushNotifications";
@@ -746,14 +748,22 @@ function NotificationsSection({ colors }: { colors: any }) {
 
 function DevicePushCard({ colors }: { colors: any }) {
   const { user } = useAuth();
+  const userId = user?.id ?? null;
   const [state, setState] = useState<PushPermissionState | null>(null);
   const [canAskAgain, setCanAskAgain] = useState(false);
+  const [registered, setRegistered] = useState(false);
 
   const refresh = React.useCallback(async () => {
     const res = await getPushPermission();
+    let reg = userId ? await hasPushRegistration(userId) : false;
+    // İzin var ama kayıt yoksa (ör. ayarlardan yeni açıldı) kaydı dene.
+    if (res.state === "granted" && !reg && userId) {
+      reg = await registerPushDevice(userId);
+    }
     setState(res.state);
     setCanAskAgain(res.canAskAgain);
-  }, []);
+    setRegistered(reg);
+  }, [userId]);
 
   useEffect(() => {
     if (!pushSupported()) return;
@@ -767,12 +777,16 @@ function DevicePushCard({ colors }: { colors: any }) {
 
   if (!pushSupported() || state === null) return null;
 
-  const isOn = state === "granted";
-  const canAskHere = !isOn && state === "undetermined" && canAskAgain;
+  // "Açık" yalnız izin VE sunucuda gerçek cihaz kaydı varsa.
+  const isOn = state === "granted" && registered;
+  const canAskHere = state === "undetermined" && canAskAgain;
+  const canRetryHere = state === "granted" && !registered;
 
   const onPress = async () => {
     if (canAskHere) {
-      if (user?.id) await requestPushPermissionAndRegister(user.id);
+      if (userId) await requestPushPermissionAndRegister(userId);
+      refresh();
+    } else if (canRetryHere) {
       refresh();
     } else {
       Linking.openSettings().catch(() => {});
@@ -815,7 +829,7 @@ function DevicePushCard({ colors }: { colors: any }) {
           style={[styles.pushBtn, { backgroundColor: colors.accent }]}
         >
           <Text style={styles.pushBtnText}>
-            {canAskHere ? "Aç" : "Ayarları aç"}
+            {canAskHere || canRetryHere ? "Aç" : "Ayarları aç"}
           </Text>
         </Pressable>
       )}

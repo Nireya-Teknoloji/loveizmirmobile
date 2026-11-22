@@ -2,8 +2,15 @@
 // Girişsiz kullanıcıya hiçbir şey sorulmaz. Yalnız iOS/Android'de çizilir.
 import * as Notifications from "expo-notifications";
 import { useRootNavigationState, useRouter, type Href } from "expo-router";
-import React, { useEffect, useRef, useState } from "react";
-import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import {
+  AppState,
+  Modal,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 
 import { HeartLogo } from "@/components/HeartLogo";
 import { useColors } from "@/hooks/useColors";
@@ -31,7 +38,39 @@ export function PushNotificationGate() {
   const handledResponse = useRef<string | null>(null);
   const lastResponse = Notifications.useLastNotificationResponse();
 
-  // Oturum açılınca: izin zaten varsa sessizce kaydol, yoksa uygun ise sor.
+  // Kaydı yürüyen kullanıcı (aynı kullanıcı için ikinci deneme başlamasın).
+  const runningFor = useRef<string | null>(null);
+  const visibleRef = useRef(false);
+  visibleRef.current = visible;
+
+  // İzin varsa sessizce kaydol, yoksa uygunsa sor. "Kontrol edildi" yalnız
+  // sunucu kaydı başarılı olunca işaretlenir; olmazsa uygulama öne gelince
+  // (ayarlardan izin açılınca dahil) yeniden denenir.
+  const syncPush = useCallback(async (userId: string) => {
+    if (checkedFor.current === userId || runningFor.current === userId) return;
+    if (visibleRef.current) return;
+    runningFor.current = userId;
+    try {
+      const stale = () => userIdRef.current !== userId;
+      // Önceki çıkışta sunucudan silinemeyen kayıt varsa önce onu sil.
+      await flushPendingPushDeletes();
+      if (stale()) return;
+      const { state } = await getPushPermission();
+      if (stale()) return;
+      if (state === "granted") {
+        const ok = await registerPushDevice(userId);
+        if (ok && !stale()) checkedFor.current = userId;
+        return;
+      }
+      const show = await shouldShowPushPrePrompt();
+      // Beklerken çıkış yapıldıysa ya da oturum değiştiyse gösterme.
+      if (show && !stale()) setVisible(true);
+    } finally {
+      if (runningFor.current === userId) runningFor.current = null;
+    }
+  }, []);
+
+  // Oturum açılınca / değişince.
   useEffect(() => {
     if (!user?.id) {
       // Çıkış: açık ön açıklama kapanır.
@@ -40,29 +79,17 @@ export function PushNotificationGate() {
       return;
     }
     if (isLoading) return;
-    if (checkedFor.current === user.id) return;
-    checkedFor.current = user.id;
-    const userId = user.id;
-    let cancelled = false;
-    (async () => {
-      // Önceki çıkışta sunucudan silinemeyen kayıt varsa önce onu sil.
-      const stale = () => cancelled || userIdRef.current !== userId;
-      await flushPendingPushDeletes();
-      if (stale()) return;
-      const { state } = await getPushPermission();
-      if (stale()) return;
-      if (state === "granted") {
-        await registerPushDevice(userId);
-        return;
-      }
-      const show = await shouldShowPushPrePrompt();
-      // Beklerken çıkış yapıldıysa ya da oturum değiştiyse gösterme.
-      if (show && !stale()) setVisible(true);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [user?.id, isLoading]);
+    void syncPush(user.id);
+  }, [user?.id, isLoading, syncPush]);
+
+  // Uygulama öne gelince kayıt henüz başarılı değilse yeniden dene.
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (next) => {
+      const userId = userIdRef.current;
+      if (next === "active" && userId) void syncPush(userId);
+    });
+    return () => sub.remove();
+  }, [syncPush]);
 
   // Bildirime dokunma (uygulama kapalıyken açılış dahil).
   useEffect(() => {
@@ -91,7 +118,8 @@ export function PushNotificationGate() {
     setVisible(false);
     const userId = userIdRef.current;
     if (!userId) return;
-    await requestPushPermissionAndRegister(userId);
+    const ok = await requestPushPermissionAndRegister(userId);
+    if (ok && userIdRef.current === userId) checkedFor.current = userId;
   };
 
   const onLater = async () => {
