@@ -21,6 +21,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { MasterAiFab } from "@/components/MasterAiFab";
 import { MasterAiSheet } from "@/components/MasterAiSheet";
+import { PushNotificationGate } from "@/components/PushNotificationGate";
 import { BlogProvider } from "@/contexts/BlogContext";
 import { AiBrainProvider } from "@/contexts/AiBrainContext";
 import { LanguageProvider } from "@/contexts/LanguageContext";
@@ -34,6 +35,7 @@ import { ThemeProvider, useTheme } from "@/contexts/ThemeContext";
 import { PulseProvider } from "@/hooks/useIzmirPulse";
 import "@/lib/apiClient";
 import { AuthProvider, useAuth } from "@/lib/auth";
+import { pushSupported } from "@/lib/pushNotifications";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -71,6 +73,7 @@ function RootLayoutNav() {
         <Stack.Screen name="partner" options={{ headerShown: false }} />
         <Stack.Screen name="transactions" options={{ headerShown: false }} />
       </Stack>
+      {pushSupported ? <PushNotificationGate /> : null}
     </>
   );
 }
