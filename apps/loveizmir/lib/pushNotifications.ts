@@ -112,12 +112,30 @@ export async function hasPushRegistration(userId: string): Promise<boolean> {
   return !!reg && reg.userId === userId;
 }
 
+/**
+ * Android 13+: izin penceresi ancak en az bir bildirim kanalı varken çıkar;
+ * kanal izin isteğinden ÖNCE oluşturulur. iOS'ta etkisiz.
+ */
+async function ensureAndroidChannel(): Promise<void> {
+  if (Platform.OS !== "android") return;
+  try {
+    await Notifications.setNotificationChannelAsync("default", {
+      name: "Bildirimler",
+      importance: Notifications.AndroidImportance.DEFAULT,
+      lightColor: "#ff6b6b",
+    });
+  } catch (err) {
+    console.warn(LOG, "bildirim kanalı oluşturulamadı", err);
+  }
+}
+
 /** Sistem izin penceresini açar; izin verilirse cihazı kaydeder. */
 export async function requestPushPermissionAndRegister(
   userId: string,
 ): Promise<boolean> {
   if (!pushSupported()) return false;
   try {
+    await ensureAndroidChannel();
     await setString(OS_ASKED_KEY, "1");
     const res = await Notifications.requestPermissionsAsync();
     if (!res.granted) return false;
@@ -153,13 +171,7 @@ async function doRegister(userId: string, gen: number): Promise<boolean> {
     const { state } = await getPushPermission();
     if (state !== "granted") return false;
 
-    if (Platform.OS === "android") {
-      await Notifications.setNotificationChannelAsync("default", {
-        name: "Bildirimler",
-        importance: Notifications.AndroidImportance.DEFAULT,
-        lightColor: "#ff6b6b",
-      });
-    }
+    await ensureAndroidChannel();
 
     // iOS: APNs cihaz token'ı (hex).
     let token: string;
