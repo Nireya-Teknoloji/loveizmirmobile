@@ -10,7 +10,10 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.nireya.loveizmir"
+      "bundleIdentifier": "com.nireya.loveizmir",
+      "infoPlist": {
+        "NSFaceIDUsageDescription": "Loveİzmir Face ID kullanmaz; oturumunu güvenle saklayan kitaplık bu açıklamayı ister."
+      }
     },
     "android": {
       "package": "com.nireya.loveizmir",
